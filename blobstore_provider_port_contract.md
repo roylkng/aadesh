@@ -1,4 +1,3 @@
-```md id="b6q2n8"
 # BlobStore Port Contract Spec v0.1
 Adesh OS
 
@@ -202,4 +201,3 @@ If reference tracking is incomplete:
 5. Provenance:
 - put_bytes requires provenance_refs; missing -> InvalidInput
 
-```

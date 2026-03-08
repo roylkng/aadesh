@@ -1,4 +1,3 @@
-```md id="g4n1z8"
 # ModelProvider Port Contract Spec v0.1 (LLM Backend Adapter)
 Adesh OS
 
@@ -183,4 +182,3 @@ Replay note:
 4. Timeout enforced: long generation -> Timeout error.
 5. Usage captured when provider supports.
 
-```

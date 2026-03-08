@@ -1,0 +1,12 @@
+[package]
+name = "adesh-storage-sqlite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+adesh-core = { path = "../adesh-core" }
+async-trait.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

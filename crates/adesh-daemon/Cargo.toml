@@ -1,0 +1,25 @@
+[package]
+name = "adesh-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+adesh-contracts = { path = "../adesh-contracts" }
+adesh-core = { path = "../adesh-core" }
+adesh-storage-sqlite = { path = "../adesh-storage-sqlite" }
+anyhow.workspace = true
+axum.workspace = true
+chrono.workspace = true
+http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+tower.workspace = true

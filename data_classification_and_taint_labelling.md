@@ -1,4 +1,3 @@
-```md id="u2n6p8"
 # Data Classification and Taint Labeling Spec v0.1
 Adesh OS
 
@@ -296,4 +295,3 @@ These codes enable audit and debugging.
 6. Negative memory:
 - never-store secrets are not persisted in raw form in logs/blobs.
 
-```

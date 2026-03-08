@@ -1,5 +1,3 @@
-
-````md id="f8r2m1"
 # Version Diff, Merge, and Conflict Resolution Spec v0.1
 Adesh OS
 
@@ -223,5 +221,4 @@ To keep diffs stable:
 
 * same inputs produce identical diff ordering and paths.
 
-```
 ```

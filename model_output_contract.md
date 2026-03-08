@@ -1,4 +1,3 @@
-````md id="m9s1q6"
 # Model Output Contract and LLM Translation Boundary (ModelProvider) Spec v0.1
 Adesh OS
 
@@ -448,6 +447,3 @@ The model’s hints are never authoritative.
 5. High-gate behavior:
 
 * for gate >= 3, model includes no inline_text data handles unless unavoidable.
-
-```
-```

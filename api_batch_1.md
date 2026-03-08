@@ -1,6 +1,7 @@
-Goal understood: lock the LLD “physics” via schemas, starting with Batch 1. Yes, batching is the right way to avoid a schema wall and keep invariants crisp.
+# API Batch 1: Boot and Route Contracts v0.1
+Adesh OS
 
-Below is **Batch 1: Boot & Route Phase** schemas. These are **interface contracts**, not database tables. Field names are chosen to directly support v2.5 semantics: ownership, OOB for R4, audience binding, operation isolation, and deterministic routing.
+This document defines the Batch 1 interface contracts for boot, request acceptance, owner session handling, and operation routing. These are interface contracts, not database tables.
 
 ```json
 {

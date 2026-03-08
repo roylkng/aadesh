@@ -1,4 +1,3 @@
-````md id="n2q8s1"
 # MCP Host Surface Contract Spec v0.1 (External Agent Integration Plane)
 Adesh OS
 
@@ -318,5 +317,4 @@ No secrets in logs.
 
 * creates notification but does not approve or execute anything.
 
-```
 ```

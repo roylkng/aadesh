@@ -1,4 +1,3 @@
-```md id="n7qk2m"
 # Verification Core Ruleset (Plan Trajectory, Taint Laundering, Anti-Retry) Spec v0.1
 Adesh OS
 
@@ -421,4 +420,3 @@ If the operation must stop:
 5. Negative memory: password field present -> deny negative_memory_violation, retry not allowed.
 6. Diff edit: modified_payload changes recipients -> must re-evaluate audience scopes and possibly increase gate.
 7. Anti-retry: same denied syscall repeated -> return same SyscallDeny and stop after max_attempts.
-```

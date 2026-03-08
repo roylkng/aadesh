@@ -1,14 +1,3 @@
-Goal understood: continue the documentation set with the next highest-leverage spec that eliminates ambiguity for the coding agent.
-
-Next doc should be **Replay and Deterministic Re-Execution** because:
-
-* you already expose `/v1/audit/{audit_trace_id}/replay`
-* determinism, pinning, and “dry_run vs full” are correctness-critical
-* it forces you to specify exactly what is re-used vs recomputed, and how actuators are stubbed
-
-Here is the repo-ready doc.
-
-````md id="r8p4k1"
 # Replay and Deterministic Re-Execution Spec v0.1
 Adesh OS
 
@@ -338,6 +327,3 @@ In all cases:
 
 * delete compiled slice record
 * replay fails with missing anchor reason.
-
-```
-```

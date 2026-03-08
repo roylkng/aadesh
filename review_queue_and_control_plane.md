@@ -1,5 +1,3 @@
-
-````md id="r2f6n1"
 # Review Queue and Control Plane Workflows Spec v0.1
 Adesh OS
 
@@ -273,6 +271,3 @@ WS events:
 5. Audit:
 
 * every decision yields an experience event and references new version if applied
-
-```
-```

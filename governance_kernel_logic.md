@@ -1,4 +1,3 @@
-```md id="a3c1n7"
 # Governance Kernel Logic (R/S Math) Spec v0.1
 Adesh OS
 
@@ -360,4 +359,3 @@ Persist syscall record before execution.
 4. If outbound audience edge is unknown, default deny.
 5. If tool schema requires forbidden field and negative memory forbids it, deny with remediation.
 6. Denials must return structured violations and remediation. No generic “blocked” errors.
-```

@@ -1,8 +1,3 @@
-Goal understood: keep going with the remaining repo-grade specs that remove ambiguity for the coding agent. Next highest-leverage gap is **Scheduler Concurrency and Operation Runner Semantics**. You have the sync loop, but not the mechanics that prevent duplicate advances, duplicated syscalls, and inconsistent state under multi-worker and crashes.
-
-Next doc: `docs/llp/scheduler_concurrency.md`.
-
-```md id="s7c2k9"
 # Scheduler Concurrency and Operation Runner Semantics Spec v0.1
 Adesh OS
 
@@ -268,4 +263,3 @@ The implementation is compliant only if:
 5. Reflection updates:
 - reflection mints new active_state_version; in-flight operation pinned version unchanged.
 
-```

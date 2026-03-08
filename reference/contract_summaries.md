@@ -2,8 +2,6 @@
 
 Non-authoritative reference summary. Canonical contracts are the root-level `api_batch_*.md` files and port contract specs.
 
-Goal understood: lock the Gateway decision (HTTP primary, MCP secondary) and then produce the first three kernel interface contracts as concrete JSON Schemas.
-
 ## 1) Gateway decision
 
 Agree with the review.

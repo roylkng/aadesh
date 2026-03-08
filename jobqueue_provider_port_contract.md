@@ -1,4 +1,3 @@
-```md id="t7k3m9"
 # JobQueue Port Contract Spec v0.1
 Adesh OS
 
@@ -230,4 +229,3 @@ Each job processing span/log must include:
 5. Dedupe:
 - enqueue same dedupe_key twice; only one pending job exists.
 
-```

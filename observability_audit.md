@@ -1,4 +1,3 @@
-```md id="o4k7v1"
 # Observability, Telemetry, and Audit Correlation Spec v0.1
 Adesh OS
 
@@ -298,4 +297,3 @@ This ensures a log line can be verified against immutable records.
 4. KRIs counters remain correct under adversarial test suite.
 5. A log line can be traced to an AuditTrace reference for gate/compiled/syscall.
 
-```

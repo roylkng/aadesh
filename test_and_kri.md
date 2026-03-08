@@ -1,4 +1,3 @@
-```md id="q7v1m9"
 # Security Test Plan and KRIs (Red-Team Suite) Spec v0.1
 Adesh OS
 
@@ -322,4 +321,3 @@ For any denial or block, logs must include:
 
 No plain “blocked” logs without context.
 
-```

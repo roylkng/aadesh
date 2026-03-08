@@ -1,4 +1,3 @@
-````md id="z5q1p0"
 # Sanitization Subsystem (Certified Sanitizers, Sensitivity Reduction Proofs) Spec v0.1
 Adesh OS
 
@@ -275,5 +274,4 @@ In full replay:
 
 * sanitized_view tagged work scope cannot be sent to public edge.
 
-```
 ```

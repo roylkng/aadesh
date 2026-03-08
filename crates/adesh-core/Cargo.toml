@@ -1,0 +1,11 @@
+[package]
+name = "adesh-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+adesh-contracts = { path = "../adesh-contracts" }
+async-trait.workspace = true
+serde.workspace = true
+thiserror.workspace = true

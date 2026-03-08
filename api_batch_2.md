@@ -1,6 +1,7 @@
-Goal understood: deliver Batch 2 schemas: `GateDecision` and `CompiledSlice`, encoding max(R,S), scopes, approvals, taint, block budgets, omissions, and pinned versions. These must be strict enough that governance is enforceable and audit-friendly.
+# API Batch 2: Governance and Compilation Contracts v0.1
+Adesh OS
 
-Below are the JSON Schemas (Draft 2020-12). These remain interface contracts, not DB tables.
+This document defines the Batch 2 interface contracts for `GateDecision` and `CompiledSlice`. These are interface contracts, not database tables.
 
 ---
 

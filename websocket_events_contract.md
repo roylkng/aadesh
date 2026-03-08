@@ -1,4 +1,3 @@
-````md id="d2yq7v"
 # WebSocket Events and Streaming Contract Spec v0.1
 Adesh OS
 
@@ -70,7 +69,7 @@ All events must conform to:
   "audit_trace_id": "string|null",
   "data": {}
 }
-````
+```
 
 ### 2.1 event_id uniqueness
 
@@ -355,5 +354,3 @@ Data:
 5. capability_update emitted:
 
 * `/v1/capabilities` returns the new snapshot version.
-
-```

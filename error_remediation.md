@@ -1,4 +1,3 @@
-````md id="l3p8s9"
 # Error Taxonomy and Remediation Catalog Spec v0.1
 Adesh OS
 
@@ -378,6 +377,3 @@ These are invariants. No exceptions.
 5. Budget:
 
 * token budget exceeded -> denial uses budget constraint ids and suggests reduce_scope.
-
-```
-```

@@ -1,4 +1,7 @@
-Below is **Batch 3: Execution & Audit Phase** as JSON Schemas (Draft 2020-12). This locks the syscall physics, anti-retry denial payload, IPC artifacts with sensitivity inheritance, and the audit trace spine for replay/debug.
+# API Batch 3: Execution and Audit Contracts v0.1
+Adesh OS
+
+This document defines the Batch 3 interface contracts for syscall execution, denials, IPC artifacts, and audit traces. These are interface contracts, not database tables.
 
 ---
 

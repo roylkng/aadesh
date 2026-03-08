@@ -1,145 +1,263 @@
 # Retention and Data Lifecycle Spec v0.1
 Adesh OS
 
-This document specifies retention, compaction, deletion, and garbage-collection policy for Adesh OS data.
+This document specifies retention, lifecycle, compaction, and deletion policies for Adesh OS data. It defines:
+- what data is stored (and why)
+- default retention periods by category
+- compaction and summarization strategies that preserve provenance
+- deletion workflows (R4) and tombstoning
+- how retention interacts with replay, audit, and compliance
+- safe garbage collection rules for blobs and versions
+
+This is algorithmic logic. Not implementation code.
+
+---
 
 ## 0) Core principles
 
-1. Auditability and replay anchors are retained by default.
-2. Experience Log remains append-only; deletion is governed and auditable.
-3. Compaction is additive and must preserve provenance.
-4. Physical deletion is never allowed when references are still required for safety/audit.
-5. Destructive lifecycle changes are governed operations.
+1. **Auditability over convenience**
+Data required for audit and replay must not be deleted silently.
 
-## 1) Data categories
+2. **Append-only core**
+Experience Log is append-only. “Deletion” is a governed, auditable process.
 
-### 1.1 Core governance ledger
-- operations + transitions
-- gate decisions
-- compiled slices
-- syscall envelopes + denies
-- approvals + OOB lifecycle metadata
-- audit traces + required anchors
-- active/audience/capability versions
+3. **Provenance must survive compaction**
+You may compact content, but you cannot remove the ability to trace claims to sources.
 
-### 1.2 Experience Log
-- request, reasoning, approval, denial, replay, reflection, review events
+4. **No unsafe garbage collection**
+Never physically delete blobs or versions unless reference tracking is complete.
+
+5. **User-controlled, explicit destructive actions**
+Any deletion beyond ephemeral cache is R4 by default and requires OOB.
+
+---
+
+## 1) Data categories and lifecycle expectations
+
+### 1.1 Core ledger (must retain longest)
+- Operations (latest + transitions)
+- AuditTrace anchors
+- GateDecision, CompiledSlice refs
+- Syscall envelopes and denies
+- Approval decisions and OOB lifecycle records (without secrets)
+- Audience graph versions
+- Active state versions
+
+Purpose:
+- accountability, replay, debugging, compliance
+
+### 1.2 Experience Log (append-only)
+- request events
+- reasoning outputs (structured)
+- approval and denial events
+- capability changes
+- review decisions
+- reflection updates
+
+Purpose:
+- immutable provenance and event history
 
 ### 1.3 Blob content
 - attachments
 - tool outputs
 - sanitized views
-- large artifacts/reports
+- large reasoning drafts
+- reports
 
-### 1.4 Derived caches/indexes
-- rebuildable indexes and runtime caches
-- WS stream chunks and temporary buffers
+Purpose:
+- replay, evidence, user retrieval
 
-## 2) Default retention policy
+### 1.4 Derived indexes/caches (short-lived)
+- embeddings or vector index (if present)
+- fast lookup caches
+- UI transient streaming buffers
 
-### 2.1 Long/indefinite retain
-- audit traces and required anchors
-- operation transitions
-- version history referenced by audit
-- approval/OOB status records (without secrets)
+Purpose:
+- performance only; safe to rebuild
 
-### 2.2 Medium retain (policy-configurable)
-- idempotency key response cache
-- large raw reasoning drafts where duplication exists
+---
 
-### 2.3 Short retain
-- ephemeral stream chunks
-- temporary staging blobs
-- non-authoritative scratch artifacts
+## 2) Default retention policy (baseline)
 
-## 3) Compaction rules
+These are defaults. They must be configurable but require governance when shortened.
+
+### 2.1 Retain indefinitely (or very long)
+- AuditTrace objects and required anchors
+- Operation transitions
+- OOB challenge metadata (challenge_id, timestamps, consumed status)
+- Review decisions
+- Versioned state history (active_state_version, audience_graph_version, capability_snapshot_version)
+
+### 2.2 Retain long (e.g., 180–365 days)
+- Idempotency keys and stored responses
+- Full reasoning drafts if they contain sensitive content (may be compacted sooner)
+
+### 2.3 Retain medium (e.g., 30–180 days)
+- Non-critical system telemetry events
+- Model provider raw debug snippets (redacted)
+
+### 2.4 Retain short (e.g., session-bound)
+- Scratch block content (never persisted as authoritative)
+- Token stream chunks (WS only)
+- Temporary staging blobs
+
+---
+
+## 3) Compaction and summarization (without losing provenance)
 
 ### 3.1 Experience Log compaction
-Compaction must write additive `compacted_summary` artifacts containing:
-- covered refs
-- time bounds
-- inherited max sensitivity/taint labels
+You may compact by creating new derived artifacts:
+- `kind=compacted_summary`
+- references a set of original event_refs
 
-Original refs remain unless governed deletion occurs.
+Rules:
+- original event_refs remain (append-only) unless deleted via R4 process
+- compacted summary is additive
+- compacted summary must include:
+  - list of covered refs
+  - time bounds
+  - sensitivity/taint labels >= max of sources
 
 ### 3.2 Blob compaction
-Derived compact artifacts must:
-- reference original `content_ref`
-- keep conservative sensitivity/taint labels
+For large blobs (e.g., long documents), create a compacted representation:
+- extracted text
+- summaries
+- thumbnails
 
-### 3.3 Version compaction
-Deprecated hypotheses may be marked deprecated but not silently removed when referenced.
+Rules:
+- compacted derivatives must reference original content_ref
+- derivatives inherit taint and sensitivity conservatively
 
-## 4) Deletion workflow (governed)
+### 3.3 Active State compaction
+Active State may prune deprecated hypotheses:
+- mark as deprecated, not delete
+- preserve provenance refs and time bounds
 
-### 4.1 Deletion classes
+Never delete user-confirmed primitives without explicit owner deletion.
+
+---
+
+## 4) Deletion workflow (R4, OOB, tombstones)
+
+### 4.1 What deletion means
+Deletion may be:
 - logical delete (tombstone)
-- physical delete (only when safe)
+- physical delete (only if safe)
 
-### 4.2 Governance
-Deletion of audit-critical anchors is at least R4 and requires OOB.
+Default approach:
+- tombstone + optional blob purge later when safe.
 
-### 4.3 Tombstones
-Each delete action must persist:
-- object ref
-- deletion timestamp
-- reason
-- requester
-- approval/OOB references
+### 4.2 Deletion request flow
+Deleting any of:
+- Experience Log entries
+- blobs referenced by audit
+- state versions
+- audience graph versions
+is an R4 operation requiring:
+- explicit user intent
+- OOB challenge
+- audit record of deletion
+
+### 4.3 Tombstone record
+When deleting an object:
+- create tombstone record:
+  - object_ref
+  - deleted_at
+  - reason
+  - requested_by (root_owner)
+  - OOB challenge id reference
+- update audit timeline
+
+Objects with tombstones must:
+- appear as deleted in UI
+- remain as references for audit (but content may be removed if physical deletion executed)
 
 ### 4.4 Physical deletion constraints
-Physical deletion allowed only when:
-- object has no required references for active operations or mandatory audit anchors
-- policy explicitly allows removal
+Physical deletion is allowed only if:
+- object is not referenced by any active operation or required audit anchor OR
+- policy explicitly permits removal and audit will record the loss of content
 
-If deletion removes replay anchors, replay must fail with explicit missing-anchor reason.
+If physical deletion would break replay:
+- replay must fail with “missing anchor due to deletion,” and that must be expected behavior.
 
-## 5) Garbage collection
+---
+
+## 5) Garbage collection rules (safe GC)
 
 ### 5.1 Mark-and-sweep for blobs
-Mark from all reachable refs in:
-- audit traces
-- experience events
-- IPC artifacts
-- versioned state refs
+To delete blobs safely:
+- Mark all content_refs reachable from:
+  - AuditTrace anchors
+  - IPCArtifacts
+  - Experience Log events that reference content
+  - current and historical state versions (if they reference blobs)
+- Sweep any blobs older than retention not marked.
 
-Only unmarked and expired blobs are eligible for physical GC.
+If mark set cannot be computed reliably:
+- do not perform physical blob GC.
 
-### 5.2 Version pruning
-Allowed only under governed policy; versions referenced by audit traces are protected.
+### 5.2 Version retention and pruning
+Versioned state (active/audience/capability):
+- keep full history by default
+- optional pruning:
+  - keep last N versions
+  - keep versions referenced by audit traces indefinitely
+Pruning must be governed and audited.
 
-### 5.3 Idempotency GC
-Never remove keys tied to non-terminal operations.
+### 5.3 Idempotency key GC
+- safe to delete keys older than retention
+- must not delete keys for operations still in non-terminal states
 
-## 6) Sensitivity-aware lifecycle
+---
 
-1. Compaction outputs inherit max sensitivity/taint of sources.
-2. Lifecycle jobs must not copy S3/S4 data into lower-class stores.
-3. Deletion requests for sensitive data may be prioritized but still governed.
+## 6) Sensitivity-aware retention
 
-## 7) Replay interaction
+Retention actions must respect sensitivity:
+- S3/S4 content should not be copied into lower-sensitivity stores
+- compaction artifacts must inherit max sensitivity and taint
+- deletion requests for sensitive data may be prioritized
 
-Replay requires anchors for:
-- pinned versions
-- gate decision
-- compiled slice
-- reasoning output
-- approvals/OOB refs
-- syscalls/results/denies
-- IPC artifacts
+---
 
-If any required anchor was deleted, replay must fail deterministically and cite tombstone refs.
+## 7) Interaction with replay
 
-## 8) Retention policy changes
+Replay requires:
+- GateDecision, CompiledSlice, reasoning output, syscalls, approvals, artifacts
 
-Shortening retention for audit-critical data is governed (R4 class by default).
-Changing GC cadence or non-critical retention is governed (typically R3).
-All policy changes must be logged and auditable.
+If retention deletes any required anchor:
+- replay must fail deterministically with a “missing anchor” reason
+- audit must show deletion tombstone
 
-## 9) Minimum test cases
+Therefore:
+- default retention for replay anchors should be long or indefinite unless user explicitly deletes.
 
-1. Tombstone recorded for governed deletion with approval/OOB refs.
-2. GC never physically deletes blob referenced by required audit anchor.
-3. Compaction preserves provenance refs and conservative S/T labels.
-4. Replay fails deterministically when required anchor is deleted.
-5. Idempotency GC skips keys tied to active operations.
+---
+
+## 8) Configuration and governance of retention changes
+
+Changing retention policies is itself governed:
+- shortening retention for audit-critical data is R4
+- changing GC schedules is R3
+
+All retention config changes must be:
+- stored as a configuration change event
+- optionally a review queue item
+
+---
+
+## 9) Minimum test cases (must pass)
+
+1. Tombstone creation:
+- delete a blob -> tombstone recorded, OOB required, audit updated.
+
+2. GC safety:
+- blob referenced by audit cannot be physically deleted.
+
+3. Compaction preserves provenance:
+- compacted summary references original event refs and inherits max taint.
+
+4. Replay after deletion:
+- deleting anchor causes replay failure with explicit missing anchor reason.
+
+5. Idempotency retention:
+- GC does not delete idempotency keys for running operations.

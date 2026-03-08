@@ -1,4 +1,3 @@
-```md id="c9k4v2"
 # Reflection Loop and Persona Enrichment Spec v0.1
 Adesh OS
 
@@ -345,4 +344,3 @@ Keep history of primitive versions for era-aware behavior.
 5. Pinned version isolation:
 - reflection produces new active_state_version; in-flight operation pinned version unchanged.
 
-```
