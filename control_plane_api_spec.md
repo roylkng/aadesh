@@ -296,7 +296,7 @@ This file must align with:
 - `approval_oob_spec.md`
 - `websocket_events_contract.md`
 - `review_queue_and_control_plane.md`
-- `replay_and_deterministic_re-exection.md`
+- `replay_and_deterministic_re_execution.md`
 - `storage_semantics_txn.md`
 
 If endpoint examples conflict, this file is canonical for HTTP route shapes and path parameters.

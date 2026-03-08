@@ -10,6 +10,11 @@ This repository contains the production-grade specifications for Adesh OS, a gov
 
 This document is the entry point. It lists what exists, what each spec controls, and the recommended reading order using the **actual filenames in this repo**.
 
+Repository organization:
+- Root-level spec files are canonical unless explicitly marked otherwise.
+- `reference/` contains non-authoritative summaries, sketches, and planning artifacts.
+- `archive/` contains retained legacy material for historical context only.
+
 ---
 
 ## 1) System overview
@@ -50,10 +55,10 @@ Adesh OS runs a strict execution pipeline:
 1. `kernel_execution_loop.md`  
    Deterministic sync execution algorithm and operation state machine.
 
-2. `governanace_kernal_logic.md`  
+2. `governance_kernel_logic.md`  
    Governance kernel logic: R/S/max_gate, predicates, approval modes, denials.
 
-3. `JIT_compiler.md`  
+3. `jit_compiler.md`  
    JIT compilation: block packing, provenance, conflicts, taint computation.
 
 4. `verification_core_ruleset.md`  
@@ -86,13 +91,13 @@ Adesh OS runs a strict execution pipeline:
 11. `websocket_events_contract.md`  
    WS event envelope, streaming chunks, ordering expectations, persistence vs ephemeral.
 
-12. `control_plane-apispec.md`  
+12. `control_plane_api_spec.md`  
    Root Owner HTTP control plane API (REST + WS integration).
 
 ---
 
 ### D) Security, privacy, classification, and governance extensions
-13. `Audience_graph_and_disclosure_policy.md`  
+13. `audience_graph_and_disclosure_policy.md`  
    Audience graph model, scopes, ceilings, outbound audience resolution, default deny.
 
 14. `data_classification_and_taint_labelling.md`  
@@ -116,7 +121,7 @@ Adesh OS runs a strict execution pipeline:
 19. `review_queue_and_control_plane.md`  
    Review items, diffs, approve/reject/edit, OOB for R4 state changes, UI workflows.
 
-20. `replay_and_deterministic_re-exection.md`  
+20. `replay_and_deterministic_re_execution.md`  
    Replay modes (dry_run/full), deterministic anchors, divergence reporting.
 
 21. `version_diff_and_merge.md`  
@@ -134,7 +139,7 @@ Adesh OS runs a strict execution pipeline:
 24. `test_and_kri.md`  
    Red-team suite, pass/fail criteria, KRI thresholds.
 
-25. `threat_mode.spec.md`  
+25. `threat_model_spec.md`  
    Threat model: assets, boundaries, adversaries, mitigations, residual risk.
 
 26. `boot_sequence.md`  
@@ -157,10 +162,10 @@ Adesh OS runs a strict execution pipeline:
 32. `jobqueue_provider_port_contract.md`  
    JobQueue contract: enqueue/lease/ack/fail, backoff, dedupe.
 
-33. `toolprovider_port_contract.md`  
+33. `tool_provider_port_contract.md`  
    ToolProvider syscall execution contract, idempotency, structured results.
 
-34. `modelprovider_port_contract.md`  
+34. `model_provider_port_contract.md`  
    ModelProvider contract: generation, streaming, retries, validation.
 
 35. `model_output_contract.md`  
@@ -173,19 +178,19 @@ Adesh OS runs a strict execution pipeline:
   Tech stack strategy and swapability principles.
 - `storage_schema.md`  
   Storage schema notes (DDL-level).
-- `Provider_Interfaces.md`  
+- `reference/provider_interfaces_summary.md`  
   Consolidated interface overview (if kept in sync with port contracts).
-- `Api_spec.md`  
+- `archive/api_spec_legacy.md`  
   Legacy/earlier API spec (keep only if intentionally retained).
-- `contracts.md` and `rust_contracts.md`  
+- `reference/contract_summaries.md` and `reference/rust_contract_summaries.md`  
   Contract summaries and code-facing notes.
-- `Problem.md`  
+- `reference/problem_statement.md`  
   Problem statement (AgentOS framing).
 - `README.md`  
   Repo entry.
-- `task.md`  
+- `reference/implementation_backlog.md`  
   Task list / planning artifacts.
-- `code_skeleton.md`  
+- `reference/code_skeleton_reference.md`  
   Implementation skeleton notes (non-authoritative versus specs).
 
 ---
@@ -196,8 +201,8 @@ Adesh OS runs a strict execution pipeline:
 - If two specs appear to conflict, resolve in this order:
   1) Invariants in this index
   2) `storage_semantics_txn.md`
-  3) `governanace_kernal_logic.md` + `verification_core_ruleset.md`
-  4) API specs (`control_plane-apispec.md`, `mcp_host_surface_contract_spec.md`)
+  3) `governance_kernel_logic.md` + `verification_core_ruleset.md`
+  4) API specs (`control_plane_api_spec.md`, `mcp_host_surface_contract_spec.md`)
   5) Port contracts
 
 - Any new behavior should land as a spec update first unless it is a pure refactor.

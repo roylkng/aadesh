@@ -1,3 +1,7 @@
+# Archived Legacy API Spec
+
+Archived, non-authoritative material kept for historical context only. The canonical HTTP control plane contract is `control_plane_api_spec.md`.
+
 # Adesh OS Localhost Control Plane API Spec v0.2 (REST + WebSockets)
 
 This spec defines the **Root Owner control plane** API surface for Adesh OS. It wraps the Batch 1–3 contract objects and supports a production-grade UI: approvals, diffs, audit, graph editing, review queues, streaming output, and deterministic governance.

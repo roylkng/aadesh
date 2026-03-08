@@ -1,4 +1,6 @@
-## Rust contracts v0.1 (Batch 1–3)
+# Rust Contract Summaries v0.1
+
+Non-authoritative reference summary. Canonical schema and behavior definitions live in the root-level batch and port contract specs.
 
 ### Cargo deps (core)
 

@@ -1,4 +1,8 @@
-Task list for next phase (drop into an .md)
+# Implementation Backlog Reference
+
+Non-authoritative planning artifact. Use the canonical specs and `docs/IMPLEMENTATION_PLAN.md` for implementation decisions.
+
+Task list for next phase
 
 0) Baseline alignment
 		•	Freeze Agent OS v2.5 as the current north-star spec.

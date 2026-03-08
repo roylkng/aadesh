@@ -1,5 +1,6 @@
+# Provider Interfaces Summary v0.1
 
-## Provider Interfaces v0.1 (language-agnostic)
+Non-authoritative reference summary. Canonical provider behavior is defined by the root-level port contract specs.
 
 ### Common conventions
 

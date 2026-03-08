@@ -1,3 +1,7 @@
+# Problem Statement Reference
+
+Non-authoritative background document. Canonical implementation behavior is defined by the current spec set, not by this framing document.
+
 ## Problem Statement: The Governed Agent OS (v2.5 Inclusive Spec)
 
 ### Objective

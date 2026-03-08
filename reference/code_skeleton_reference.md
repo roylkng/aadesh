@@ -1,3 +1,7 @@
+# Code Skeleton Reference
+
+Non-authoritative implementation sketch. Canonical structure and behavior are defined by the root-level specs and `docs/IMPLEMENTATION_PLAN.md`.
+
 Goal understood: next step is a concrete, production-grade codebase skeleton: **crate/module layout** plus **SQLiteStorageProvider + FSBlobStore skeleton implementations** wired to the DDL and the Batch contracts.
 
 Below is a clean starting point for a Rust workspace that matches the HLD and keeps swapping possible.

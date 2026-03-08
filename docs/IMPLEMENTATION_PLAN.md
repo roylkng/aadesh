@@ -70,10 +70,10 @@ MCP Host
 
 ### Current status
 The documentation set is now aligned for implementation. The Phase 0.5 repairs are incorporated:
-- `control_plane-apispec.md` is canonical and Root Owner only.
+- `control_plane_api_spec.md` is canonical and Root Owner only.
 - `operation_decomposition_ipc.md` is now the actual decomposition and explicit IPC spec.
 - `schema_registry_and_versioning.md` is canonical and content-addressed.
-- `retention_and_data_lifecycle.md` and `threat_mode.spec.md` are restored to their intended roles.
+- `retention_and_data_lifecycle.md` and `threat_model_spec.md` are restored to their intended roles.
 - Approval and OOB routes are canonicalized to `approval_id`.
 - Batch contracts pin all three required versions.
 - Cross-references to `test_and_kri.md` are repaired.
@@ -85,7 +85,7 @@ The documentation set is now aligned for implementation. The Phase 0.5 repairs a
 - `storage_schema.md` now includes durable backing for operation leases across both reference backends.
 - `storage_schema.md` now includes `current_versions`, `capability_snapshots`, and `schema_registry_entries`, matching schema-registry and capability snapshot requirements.
 - `storage_provider_port_contract.md` now includes read methods for pinned version snapshots and schema registry access, not only mint operations.
-- Reference and summary docs (`Provider_Interfaces.md`, `contracts.md`, `rust_contracts.md`, `task.md`) now reflect approval-bound OOB and three-version pinning.
+- Reference and summary docs (`reference/provider_interfaces_summary.md`, `reference/contract_summaries.md`, `reference/rust_contract_summaries.md`, `reference/implementation_backlog.md`) now reflect approval-bound OOB and three-version pinning.
 
 ## C) Database + storage mapping
 
@@ -239,8 +239,8 @@ Acceptance criteria:
   - `operation_persists_gate_and_compiled_slice_before_running`
   - `awaiting_approval_state_persisted_before_ws_approval_required`
 - Specs validated:
-  - `governanace_kernal_logic.md`
-  - `JIT_compiler.md`
+  - `governance_kernel_logic.md`
+  - `jit_compiler.md`
   - `verification_core_ruleset.md`
   - `storage_semantics_txn.md`
   - `test_and_kri.md`
@@ -270,7 +270,7 @@ Acceptance criteria:
   - `replay_missing_anchor_fail_closed`
   - `reflection_review_items_created_no_auto_dangerous_write`
 - Specs validated:
-  - `replay_and_deterministic_re-exection.md`
+  - `replay_and_deterministic_re_execution.md`
   - `reflection_and_persona.md`
   - `scheduler_concurrency.md`
   - `storage_semantics_txn.md`
