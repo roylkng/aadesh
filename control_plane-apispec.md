@@ -25,11 +25,16 @@ This document defines the canonical HTTP/WS control plane contract for Adesh OS.
 ### 1.3 Idempotency
 Idempotency is required for state-changing POST endpoints:
 - `POST /v1/requests`
+- `POST /v1/operations/{operation_id}/cancel`
 - `POST /v1/approvals/{approval_id}`
 - `POST /v1/approvals/{approval_id}/oob/start`
 - `POST /v1/approvals/{approval_id}/oob/verify`
 - `POST /v1/review-queue/{item_id}/decide`
 - `POST /v1/audit/{audit_trace_id}/replay`
+- `POST /v1/capabilities/{kind}/{name}/enable`
+- `POST /v1/capabilities/{kind}/{name}/disable`
+
+If audience graph mutation endpoints are enabled in a deployment, they must also require idempotency keys.
 
 Header:
 - `Idempotency-Key: <opaque-key>`

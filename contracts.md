@@ -112,10 +112,12 @@ These are written to be language-agnostic and implementable on Pi and workstatio
     "pinned": {
       "description": "Filled after compilation.",
       "type": "object",
+      "required": ["active_state_version", "capability_snapshot_version", "audience_graph_version"],
       "additionalProperties": false,
       "properties": {
         "active_state_version": { "type": "string" },
-        "capability_snapshot_version": { "type": "string" }
+        "capability_snapshot_version": { "type": "string" },
+        "audience_graph_version": { "type": "string" }
       }
     },
 
@@ -153,6 +155,7 @@ These are written to be language-agnostic and implementable on Pi and workstatio
     "data_sensitivity",
     "max_gate",
     "approval_mode",
+    "pinned",
     "allowed_scopes",
     "denied_scopes",
     "taint_ceiling",
@@ -174,6 +177,17 @@ These are written to be language-agnostic and implementable on Pi and workstatio
     },
 
     "approval_prompt": { "type": ["string", "null"] },
+
+    "pinned": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active_state_version", "capability_snapshot_version", "audience_graph_version"],
+      "properties": {
+        "active_state_version": { "type": "string" },
+        "capability_snapshot_version": { "type": "string" },
+        "audience_graph_version": { "type": "string" }
+      }
+    },
 
     "allowed_scopes": { "type": "array", "items": { "type": "string" }, "default": [] },
     "denied_scopes": { "type": "array", "items": { "type": "string" }, "default": [] },
@@ -282,10 +296,11 @@ Supporting schemas referenced above:
     "pinned_state": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["active_state_version", "capability_snapshot_version"],
+      "required": ["active_state_version", "capability_snapshot_version", "audience_graph_version"],
       "properties": {
         "active_state_version": { "type": "string" },
-        "capability_snapshot_version": { "type": "string" }
+        "capability_snapshot_version": { "type": "string" },
+        "audience_graph_version": { "type": "string" }
       }
     },
 
@@ -440,7 +455,7 @@ Supporting schemas referenced above:
     "context": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["gate", "audience", "pinned_state_version", "taint"],
+      "required": ["gate", "audience", "pinned_versions", "taint"],
       "properties": {
         "gate": {
           "type": "object",
@@ -461,7 +476,16 @@ Supporting schemas referenced above:
             "allowed_scopes": { "type": "array", "items": { "type": "string" }, "default": [] }
           }
         },
-        "pinned_state_version": { "type": "string" },
+        "pinned_versions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["active_state_version", "capability_snapshot_version", "audience_graph_version"],
+          "properties": {
+            "active_state_version": { "type": "string" },
+            "capability_snapshot_version": { "type": "string" },
+            "audience_graph_version": { "type": "string" }
+          }
+        },
         "taint": { "type": "string", "enum": ["S0", "S1", "S2", "S3", "S4"] }
       }
     }

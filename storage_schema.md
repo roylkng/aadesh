@@ -18,18 +18,20 @@
 6. `approval_items` + `approval_item_syscalls` + `oob_challenges`
 7. `ipc_artifacts`
 8. `audit_traces`
-9. `active_state_versions`
-10. `audience_graph_nodes`, `audience_graph_edges`, `audience_graph_scopes`
-11. `review_queue_items` + `review_queue_decisions`
-12. `idempotency_keys`
-13. `jobs` (reflection queue)
-14. `blob_objects` (metadata only, content in filesystem/S3)
+9. `active_state_versions` + `current_versions`
+10. `capability_snapshots`
+11. `schema_registry_entries`
+12. `audience_graph_nodes`, `audience_graph_edges`, `audience_graph_scopes`
+13. `review_queue_items` + `review_queue_decisions`
+14. `idempotency_keys`
+15. `jobs` (reflection queue)
+16. `blob_objects` (metadata only, content in filesystem/S3)
 
 Minimal indexes are included below.
 
 ---
 
-# SQLite DDL v0.1 (local-first)
+# SQLite DDL v0.1 (reference backend)
 
 > Notes:
 >
@@ -46,12 +48,23 @@ CREATE TABLE IF NOT EXISTS active_state_versions (
   state_version TEXT PRIMARY KEY,
   created_at TEXT NOT NULL,
   parent_version TEXT,
-  kind TEXT NOT NULL, -- e.g., "active_state", "audience_graph", "capability_snapshot"
+  content_hash TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  provenance_refs_json TEXT NOT NULL,
   notes TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_active_state_versions_created
   ON active_state_versions(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_active_state_versions_parent
+  ON active_state_versions(parent_version);
+
+CREATE TABLE IF NOT EXISTS current_versions (
+  version_kind TEXT PRIMARY KEY,       -- active_state|audience_graph|capability_snapshot
+  version_id TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 
 -- =========================
 -- 2) Experience Log (append-only)
@@ -117,21 +130,6 @@ CREATE TABLE IF NOT EXISTS operation_transitions (
 
 CREATE INDEX IF NOT EXISTS idx_operation_transitions_op_ts
   ON operation_transitions(operation_id, ts);
-
-CREATE TABLE IF NOT EXISTS operation_leases (
-  operation_id TEXT PRIMARY KEY REFERENCES operations(operation_id),
-  lease_owner TEXT NOT NULL,
-  leased_until TIMESTAMPTZ NOT NULL,
-  lease_epoch INT NOT NULL,
-  last_heartbeat_at TIMESTAMPTZ,
-  updated_at TIMESTAMPTZ NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_operation_leases_until
-  ON operation_leases(leased_until);
-
-CREATE INDEX IF NOT EXISTS idx_operation_leases_owner_until
-  ON operation_leases(lease_owner, leased_until);
 
 CREATE TABLE IF NOT EXISTS operation_leases (
   operation_id TEXT PRIMARY KEY,
@@ -346,7 +344,46 @@ CREATE INDEX IF NOT EXISTS idx_audit_traces_op
   ON audit_traces(operation_id);
 
 -- =========================
--- 10) Audience Graph (versioned externally via active_state_versions)
+-- 10) Capability snapshots
+-- =========================
+CREATE TABLE IF NOT EXISTS capability_snapshots (
+  capability_snapshot_version TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  parent_version TEXT,
+  content_hash TEXT NOT NULL,
+  json_payload TEXT NOT NULL,
+  notes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_capability_snapshots_created
+  ON capability_snapshots(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_capability_snapshots_parent
+  ON capability_snapshots(parent_version);
+
+-- =========================
+-- 11) Schema registry
+-- =========================
+CREATE TABLE IF NOT EXISTS schema_registry_entries (
+  schema_ref TEXT PRIMARY KEY,
+  schema_kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  semver TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  status TEXT NOT NULL,
+  compatibility TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_schema_registry_name_semver
+  ON schema_registry_entries(name, semver);
+
+CREATE INDEX IF NOT EXISTS idx_schema_registry_hash
+  ON schema_registry_entries(content_hash);
+
+-- =========================
+-- 12) Audience Graph
 -- =========================
 CREATE TABLE IF NOT EXISTS audience_graph_nodes (
   node_id TEXT PRIMARY KEY,
@@ -387,7 +424,7 @@ CREATE INDEX IF NOT EXISTS idx_audience_scopes_version
   ON audience_graph_scopes(graph_version);
 
 -- =========================
--- 11) Review queue (hypothesis promotion)
+-- 13) Review queue (hypothesis promotion)
 -- =========================
 CREATE TABLE IF NOT EXISTS review_queue_items (
   item_id TEXT PRIMARY KEY,
@@ -418,7 +455,7 @@ CREATE TABLE IF NOT EXISTS review_queue_decisions (
 );
 
 -- =========================
--- 12) Idempotency keys
+-- 14) Idempotency keys
 -- =========================
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   endpoint_scope TEXT NOT NULL,
@@ -435,7 +472,7 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires
   ON idempotency_keys(expires_at);
 
 -- =========================
--- 13) Jobs queue (reflection)
+-- 15) Jobs queue (reflection)
 -- =========================
 CREATE TABLE IF NOT EXISTS jobs (
   job_id TEXT PRIMARY KEY,
@@ -454,7 +491,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after
   ON jobs(status, run_after);
 
 -- =========================
--- 14) Blob metadata (content stored in FS/S3)
+-- 16) Blob metadata (content stored in FS/S3)
 -- =========================
 CREATE TABLE IF NOT EXISTS blob_objects (
   content_ref TEXT PRIMARY KEY,
@@ -475,7 +512,7 @@ CREATE INDEX IF NOT EXISTS idx_blob_created
 
 ---
 
-# Postgres DDL v0.1 (server profile, compatible superset)
+# Postgres DDL v0.1 (reference backend, server profile)
 
 > Notes:
 >
@@ -491,12 +528,23 @@ CREATE TABLE IF NOT EXISTS active_state_versions (
   state_version TEXT PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL,
   parent_version TEXT,
-  kind TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  payload_json JSONB NOT NULL,
+  provenance_refs_json JSONB NOT NULL,
   notes TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_active_state_versions_created
   ON active_state_versions(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_active_state_versions_parent
+  ON active_state_versions(parent_version);
+
+CREATE TABLE IF NOT EXISTS current_versions (
+  version_kind TEXT PRIMARY KEY,
+  version_id TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
 
 -- =========================
 -- 2) Experience Log
@@ -558,6 +606,21 @@ CREATE TABLE IF NOT EXISTS operation_transitions (
 
 CREATE INDEX IF NOT EXISTS idx_operation_transitions_op_ts
   ON operation_transitions(operation_id, ts);
+
+CREATE TABLE IF NOT EXISTS operation_leases (
+  operation_id TEXT PRIMARY KEY REFERENCES operations(operation_id),
+  lease_owner TEXT NOT NULL,
+  leased_until TIMESTAMPTZ NOT NULL,
+  lease_epoch INT NOT NULL,
+  last_heartbeat_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_operation_leases_until
+  ON operation_leases(leased_until);
+
+CREATE INDEX IF NOT EXISTS idx_operation_leases_owner_until
+  ON operation_leases(lease_owner, leased_until);
 
 -- =========================
 -- 4) Gate decisions
@@ -751,7 +814,46 @@ CREATE INDEX IF NOT EXISTS idx_audit_traces_op
   ON audit_traces(operation_id);
 
 -- =========================
--- 10) Audience Graph tables (versioned)
+-- 10) Capability snapshots
+-- =========================
+CREATE TABLE IF NOT EXISTS capability_snapshots (
+  capability_snapshot_version TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL,
+  parent_version TEXT,
+  content_hash TEXT NOT NULL,
+  json_payload JSONB NOT NULL,
+  notes TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_capability_snapshots_created
+  ON capability_snapshots(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_capability_snapshots_parent
+  ON capability_snapshots(parent_version);
+
+-- =========================
+-- 11) Schema registry
+-- =========================
+CREATE TABLE IF NOT EXISTS schema_registry_entries (
+  schema_ref TEXT PRIMARY KEY,
+  schema_kind TEXT NOT NULL,
+  name TEXT NOT NULL,
+  semver TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL,
+  compatibility TEXT NOT NULL,
+  payload_json JSONB NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_schema_registry_name_semver
+  ON schema_registry_entries(name, semver);
+
+CREATE INDEX IF NOT EXISTS idx_schema_registry_hash
+  ON schema_registry_entries(content_hash);
+
+-- =========================
+-- 12) Audience Graph tables (versioned)
 -- =========================
 CREATE TABLE IF NOT EXISTS audience_graph_nodes (
   node_id TEXT NOT NULL,
@@ -795,7 +897,7 @@ CREATE INDEX IF NOT EXISTS idx_audience_scopes_version
   ON audience_graph_scopes(graph_version);
 
 -- =========================
--- 11) Review queue
+-- 13) Review queue
 -- =========================
 CREATE TABLE IF NOT EXISTS review_queue_items (
   item_id TEXT PRIMARY KEY,
@@ -825,7 +927,7 @@ CREATE TABLE IF NOT EXISTS review_queue_decisions (
 );
 
 -- =========================
--- 12) Idempotency keys
+-- 14) Idempotency keys
 -- =========================
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   endpoint_scope TEXT NOT NULL,
@@ -842,7 +944,7 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires
   ON idempotency_keys(expires_at);
 
 -- =========================
--- 13) Jobs queue
+-- 15) Jobs queue
 -- =========================
 CREATE TABLE IF NOT EXISTS jobs (
   job_id TEXT PRIMARY KEY,
@@ -861,7 +963,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after
   ON jobs(status, run_after);
 
 -- =========================
--- 14) Blob metadata
+-- 16) Blob metadata
 -- =========================
 CREATE TABLE IF NOT EXISTS blob_objects (
   content_ref TEXT PRIMARY KEY,

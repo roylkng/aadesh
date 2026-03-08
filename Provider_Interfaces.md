@@ -34,16 +34,24 @@ Owns: Experience Log, Active State (versioned), Audience Graph, hypotheses/revie
 
 **Active State (versioned)**
 
-* `get_active_state_version() -> state_version`
-* `read_state(state_version, query) -> result`
-* `commit_state_update(base_version, mutations, idempotency_key) -> new_state_version`
+* `get_current_versions() -> {active_state_version, audience_graph_version, capability_snapshot_version}`
+* `get_active_state_snapshot(state_version) -> active_state_snapshot`
+* `mint_active_state_version(base_version, mutations, provenance_refs, idempotency_key) -> new_state_version`
 
   * must fail with `Conflict` if `base_version` is not current (unless mutation is explicitly mergeable)
 
 **Audience Graph**
 
-* `get_audience_graph(version?) -> graph_snapshot`
+* `get_audience_graph_snapshot(graph_version) -> graph_snapshot`
 * `apply_audience_graph_patch(base_version, patch, idempotency_key) -> new_graph_version`
+
+**Capability snapshots + schema registry**
+
+* `get_capability_snapshot(version) -> capability_snapshot`
+* `mint_capability_snapshot_version(base_version, snapshot_payload, idempotency_key) -> new_snapshot_version`
+* `register_schema_entry(schema_payload, schema_kind, name, semver) -> schema_ref`
+* `get_schema_entry(schema_ref) -> schema_entry`
+* `find_schema_entries(filter) -> [schema_entry]`
 
 **Hypotheses + Review Queue**
 
@@ -162,12 +170,12 @@ Owns: Root Owner session + OOB verification.
 
 * `create_owner_session(auth_input) -> OwnerSession`
 * `validate_owner_session(session_id) -> OwnerSession|Unauthorized`
-* `start_oob_challenge(owner_session_id, challenge_type) -> {challenge_id, nonce}`
-* `verify_oob_challenge(owner_session_id, challenge_id, response) -> OwnerSession(auth_level=oob_verified)`
+* `start_oob_challenge(approval_id, challenge_type) -> {challenge_id, nonce}`
+* `verify_oob_challenge(approval_id, challenge_id, response) -> OobVerificationReceipt`
 
 ### Invariants
 
-* OOB verification must be bound to session + nonce (anti-replay).
+* OOB verification must be bound to `approval_id` + nonce (anti-replay).
 
 ---
 
@@ -220,23 +228,35 @@ pub trait StorageProvider: Send + Sync {
   async fn get_event(&self, event_ref: &str) -> Result<ExperienceEvent, AdeshError>;
   async fn query_events(&self, filter: EventQuery) -> Result<Vec<String>, AdeshError>;
 
-  async fn get_active_state_version(&self) -> Result<String, AdeshError>;
-  async fn read_state(&self, state_version: &str, query: StateQuery) -> Result<StateReadResult, AdeshError>;
+  async fn get_current_versions(&self) -> Result<CurrentVersions, AdeshError>;
+  async fn get_active_state_snapshot(&self, state_version: &str) -> Result<ActiveStateSnapshot, AdeshError>;
 
-  async fn commit_state_update(
+  async fn mint_active_state_version(
     &self,
     base_version: &str,
     mutations: Vec<StateMutation>,
+    provenance_refs: Vec<String>,
     idempotency_key: Option<String>,
   ) -> Result<String, AdeshError>;
 
-  async fn get_audience_graph(&self, version: Option<&str>) -> Result<AudienceGraphSnapshot, AdeshError>;
+  async fn get_audience_graph_snapshot(&self, version: &str) -> Result<AudienceGraphSnapshot, AdeshError>;
   async fn apply_audience_graph_patch(
     &self,
     base_version: &str,
     patch: AudienceGraphPatch,
     idempotency_key: Option<String>,
   ) -> Result<String, AdeshError>;
+
+  async fn get_capability_snapshot(&self, version: &str) -> Result<CapabilitySnapshot, AdeshError>;
+  async fn mint_capability_snapshot_version(
+    &self,
+    base_version: &str,
+    snapshot: CapabilitySnapshot,
+    idempotency_key: Option<String>,
+  ) -> Result<String, AdeshError>;
+  async fn register_schema_entry(&self, entry: SchemaEntry) -> Result<String, AdeshError>;
+  async fn get_schema_entry(&self, schema_ref: &str) -> Result<SchemaEntry, AdeshError>;
+  async fn find_schema_entries(&self, filter: SchemaQuery) -> Result<Vec<SchemaEntry>, AdeshError>;
 
   async fn create_operation(&self, op: OperationSpec, idempotency_key: Option<String>) -> Result<(), AdeshError>;
   async fn update_operation_state(&self, op_id: &str, transition: OperationTransition, idempotency_key: Option<String>)
@@ -290,9 +310,9 @@ pub trait ToolProvider: Send + Sync {
 pub trait AuthProvider: Send + Sync {
   async fn create_owner_session(&self, input: AuthInput) -> Result<OwnerSession, AdeshError>;
   async fn validate_owner_session(&self, session_id: &str) -> Result<OwnerSession, AdeshError>;
-  async fn start_oob_challenge(&self, session_id: &str, challenge_type: &str) -> Result<OobChallenge, AdeshError>;
-  async fn verify_oob_challenge(&self, session_id: &str, challenge_id: &str, response: OobResponse)
-    -> Result<OwnerSession, AdeshError>;
+  async fn start_oob_challenge(&self, approval_id: &str, challenge_type: &str) -> Result<OobChallenge, AdeshError>;
+  async fn verify_oob_challenge(&self, approval_id: &str, challenge_id: &str, response: OobResponse)
+    -> Result<OobVerificationReceipt, AdeshError>;
 }
 
 // ---------- ObservabilityProvider ----------

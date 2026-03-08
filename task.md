@@ -1,8 +1,8 @@
 Task list for next phase (drop into an .md)
 
 0) Baseline alignment
-	•	Freeze Agent OS v2.5 as the current north-star spec.
-	•	Define Phase 1 target: local-first daemon on Linux/macOS + Raspberry Pi.
+		•	Freeze Agent OS v2.5 as the current north-star spec.
+		•	Define Phase 1 target: daemon on Linux/macOS + Raspberry Pi with pluggable backends.
 
 ⸻
 
@@ -46,7 +46,7 @@ Task list for next phase (drop into an .md)
 
 2.2 Syscall contract (all tool reads/writes)
 	•	Standard syscall request/response envelope:
-	•	operation_id, isolation_id, pinned_state_version
+		•	operation_id, isolation_id, pinned versions (`active_state_version`, `capability_snapshot_version`, `audience_graph_version`)
 	•	computed gate: R, S, max
 	•	taint labels in/out
 	•	Policy-aware rejection payload:
@@ -112,7 +112,7 @@ KPIs (product)
 
 ⸻
 
-5) Phase 1 build plan (local-first daemon)
+5) Phase 1 build plan (daemon, reference SQLite backend first)
 	•	Build the daemon skeleton:
 	•	gateway + scheduler + operation state machine
 	•	governance kernel enforcement

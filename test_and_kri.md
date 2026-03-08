@@ -37,8 +37,8 @@ This is a production validation spec. Not implementation code.
 ## 1) Test harness assumptions
 
 - Tests may run against:
-  - a local-first profile (SQLite, FS blob store)
-  - optionally a server profile (Postgres, object store)
+  - a reference SQLite backend profile (SQLite, FS blob store)
+  - optionally a server backend profile (Postgres, object store)
 - All tests interact only via:
   - HTTP control plane (Root Owner) and WS events
   - MCP tool stubs for sensors/actuators

@@ -1,5 +1,4 @@
-```md id="i1w9c2"
-# Operation Decomposition and IPC (Isolation, Sensitivity Inheritance, Explicit Piping) Spec v0.1
+# Operation Decomposition and Explicit IPC Spec v0.1
 Adesh OS
 
 This document specifies how Adesh OS decomposes a single `RequestEnvelope` into one or more `OperationSpec` units and how operations exchange data via explicit IPC. It defines:
@@ -40,14 +39,18 @@ This is algorithmic logic. Not implementation code.
 ### Inputs
 - `RequestEnvelope`
 - Owner context (Root Owner)
-- current `capability_snapshot`
-- Audience Graph snapshot
+- current `active_state_version`
+- current `capability_snapshot_version`
+- current `audience_graph_version`
+- Active State snapshot at `active_state_version`
+- Capability snapshot at `capability_snapshot_version`
+- Audience Graph snapshot at `audience_graph_version`
 - default budgets
 
 ### Outputs
 - A list of `OperationSpec[]` such that:
   - each has unique `operation_id`, unique `isolation_id`
-  - each pins versions at creation time
+  - each pins `active_state_version`, `capability_snapshot_version`, and `audience_graph_version` at creation time
   - each has a clear `operation_goal.summary`
   - each declares explicit IPC dependencies if needed (consumes_artifacts, inherits_sensitivity)
 
@@ -82,7 +85,7 @@ From `RequestEnvelope.input.content` and attachments, identify candidate intents
 - mentioned audiences (people, orgs, public)
 - implied actions (send, delete, publish)
 
-This extraction can be heuristic or model-assisted, but the decomposition decision must follow deterministic rules below.
+Extraction must be deterministic and parser/heuristic driven in v0.1. Model assistance may be used only for non-authoritative hints and must not create, remove, or suppress a required boundary.
 
 ### Step 3.2: Build the candidate action graph
 Represent the request as an ordered set of logical steps:
@@ -284,8 +287,7 @@ The UI should see:
 WS events:
 - `operation_state` per operation
 - `audit_update` per operation
-- optional `ipc_emit` and `ipc_receive` events:
-  - include artifact_id and producer/consumer operation ids
+- optional `ipc_emit` and `ipc_receive` events including `artifact_id` and producer/consumer operation ids
 
 ---
 
@@ -312,4 +314,3 @@ Expected:
 
 5. Explicit sanitization:
 - Attempt to send unsanitized S3 artifact to public -> denied with taint laundering.
-```

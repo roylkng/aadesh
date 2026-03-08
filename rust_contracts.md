@@ -578,7 +578,7 @@ pub struct GateDecision {
   pub operation_id: String,
   pub isolation_id: String,
   pub evaluated_at: DateTime<Utc>,
-  pub pinned_state_version: String,
+  pub pinned: PinnedVersions,
   pub risk: RiskInfo,
   pub sensitivity: SensitivityInfo,
   pub max_gate: u8,

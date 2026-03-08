@@ -117,9 +117,9 @@ Constraints:
 
 ### Step 3.2: Pin versions
 For each operation:
-- `active_state_version = StorageProvider.get_active_state_version()`
-- `capability_snapshot_version = current capability registry snapshot id`
-- `audience_graph_version = current audience graph version id`
+- `active_state_version = StorageProvider.get_current_versions().active_state_version`
+- `capability_snapshot_version = StorageProvider.get_current_versions().capability_snapshot_version`
+- `audience_graph_version = StorageProvider.get_current_versions().audience_graph_version`
 Pin these into `OperationSpec.pinned_state` and store in the operation record.
 
 If any version cannot be resolved: return `500` (kernel cannot operate without pinned versions).

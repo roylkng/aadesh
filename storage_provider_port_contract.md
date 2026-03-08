@@ -1,4 +1,3 @@
-```md id="v4n8p1"
 # StorageProvider Port Contract Spec v0.1
 Adesh OS
 
@@ -96,11 +95,16 @@ StorageProvider must persist and fetch:
 - active_state versions (immutable)
 - audience_graph versions (immutable)
 - capability_snapshot versions (immutable)
+- current version pointers for each mutable governed domain
 
-### 2.9 Review Queue
+### 2.9 Schema Registry
+- immutable schema rows keyed by `schema_ref`
+- lookup by hash and by logical `(name, semver)`
+
+### 2.10 Review Queue
 - review items pending/resolved, linked to version mints
 
-### 2.10 Idempotency keys
+### 2.11 Idempotency keys
 - stored responses for mutation endpoints
 
 ---
@@ -379,7 +383,13 @@ Returns:
 - current audience_graph_version
 - current capability_snapshot_version
 
-### 14.2 mint_active_state_version
+### 14.2 get_active_state_snapshot
+Inputs:
+- state_version
+Returns:
+- immutable active state snapshot payload for that version
+
+### 14.3 mint_active_state_version
 Inputs:
 - base_version
 - change set (primitives added/updated/deprecated)
@@ -387,19 +397,55 @@ Inputs:
 Semantics:
 - creates immutable new version, returns id
 
-### 14.3 mint_audience_graph_version
+### 14.4 get_audience_graph_snapshot
+Inputs:
+- graph_version
+Returns:
+- immutable audience graph snapshot at that version
+
+### 14.5 mint_audience_graph_version
 Inputs:
 - base_version
 - patch set (nodes/edges/policies)
 Semantics:
 - immutable new version
 
-### 14.4 mint_capability_snapshot_version
+### 14.6 get_capability_snapshot
+Inputs:
+- capability_snapshot_version
+Returns:
+- immutable capability snapshot payload, including tool descriptors and bound schema refs
+
+### 14.7 mint_capability_snapshot_version
 Inputs:
 - base_version
 - snapshot payload (tool descriptors + schema refs)
 Semantics:
 - immutable new version
+
+### 14.8 register_schema_entry
+Inputs:
+- schema payload
+- schema_kind
+- logical name
+- semver
+Semantics:
+- canonicalize payload, compute content hash, and persist immutable row keyed by `schema_ref`
+- inserting identical payload twice must return the same `schema_ref`
+
+### 14.9 get_schema_entry
+Inputs:
+- schema_ref
+Returns:
+- immutable schema row and payload
+
+### 14.10 find_schema_entry
+Inputs:
+- optional logical name
+- optional semver
+- optional content_hash
+Returns:
+- matching schema metadata rows
 
 ---
 
@@ -467,5 +513,3 @@ Failure mode:
 
 5. Audit anchors:
 - gate decision, compiled slice, reasoning output, syscalls, denies all retrievable by trace references.
-
-```
