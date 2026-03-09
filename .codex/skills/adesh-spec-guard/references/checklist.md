@@ -25,6 +25,7 @@ These filenames are canonical and should not regress:
 - root-level specs win over `reference/` and `archive/`
 - root-level markdown files (except `README.md`, `AGENTS.md`) must be indexed in `index.md`
 - `docs/REPO_ORGANIZATION.md` and `registry/README.md` must exist
+- `docs/README.md`, `docs/DOCS_MAP.md`, `docs/CODEBASE_MAP.md`, and `crates/README.md` must exist
 - `.gitignore` must include `/target/`
 
 ## Milestone checks

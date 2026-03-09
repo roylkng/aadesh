@@ -36,6 +36,9 @@ Non-negotiable:
 1. Read `index.md` first.
 2. Then read `docs/IMPLEMENTATION_PLAN.md` for sequencing and milestone gates.
 3. Use canonical specs (root-level docs) for behavioral truth.
+4. For fast traversal:
+   - `docs/DOCS_MAP.md` (spec lookup by task/endpoint)
+   - `docs/CODEBASE_MAP.md` (code entrypoints and edit surfaces)
 
 ## Minimum reading order for implementation work
 
@@ -102,8 +105,11 @@ Key entry points:
   - `model_provider_port_contract.md`
 
 ### Implementation plan
+- `docs/README.md`
 - `docs/IMPLEMENTATION_PLAN.md`
 - `docs/REPO_ORGANIZATION.md`
+- `docs/DOCS_MAP.md`
+- `docs/CODEBASE_MAP.md`
 
 This plan is the implementation baseline. It is not a substitute for canonical specs.
 

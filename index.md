@@ -202,10 +202,18 @@ Adesh OS runs a strict execution pipeline:
   Tech stack strategy and swapability principles.
 - `storage_schema.md`  
   Storage schema notes (DDL-level).
+- `docs/README.md`  
+  Directory-level guide for process and traversal docs.
 - `docs/REPO_ORGANIZATION.md`  
   Repository layout, placement, and contribution hygiene contract.
+- `docs/DOCS_MAP.md`  
+  Task-to-spec navigation map for humans and coding agents.
+- `docs/CODEBASE_MAP.md`  
+  Rust workspace traversal map (entrypoints, edit surfaces, tests).
 - `registry/README.md`  
   Bootstrap artifact layout for schema and capability snapshot initialization.
+- `crates/README.md`  
+  Crate-level workspace map.
 - `reference/provider_interfaces_summary.md`  
   Consolidated interface overview (if kept in sync with port contracts).
 - `archive/api_spec_legacy.md`  

@@ -48,6 +48,7 @@ Place only:
 - implementation plans
 - wedge/scope lock documents
 - process contracts (like this file)
+- navigation maps for specs/code traversal
 
 Do not place canonical behavior specs here.
 
@@ -116,3 +117,11 @@ Before opening a PR:
 3. Guard script passes.
 4. Tests pass.
 5. No generated clutter is tracked.
+
+## 8) Traversal aids
+
+Keep these navigation docs up to date when structure changes:
+
+- `docs/DOCS_MAP.md`
+- `docs/CODEBASE_MAP.md`
+- `crates/README.md`

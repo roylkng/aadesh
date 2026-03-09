@@ -79,8 +79,24 @@ if [ ! -f docs/REPO_ORGANIZATION.md ]; then
   echo "Missing docs/REPO_ORGANIZATION.md"
   found=1
 fi
+if [ ! -f docs/README.md ]; then
+  echo "Missing docs/README.md"
+  found=1
+fi
+if [ ! -f docs/DOCS_MAP.md ]; then
+  echo "Missing docs/DOCS_MAP.md"
+  found=1
+fi
+if [ ! -f docs/CODEBASE_MAP.md ]; then
+  echo "Missing docs/CODEBASE_MAP.md"
+  found=1
+fi
 if [ ! -f registry/README.md ]; then
   echo "Missing registry/README.md"
+  found=1
+fi
+if [ ! -f crates/README.md ]; then
+  echo "Missing crates/README.md"
   found=1
 fi
 if [ ! -f .gitignore ] || ! grep -q '^/target/$' .gitignore; then
