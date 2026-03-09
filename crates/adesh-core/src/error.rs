@@ -10,6 +10,14 @@ pub enum StorageError {
     Unavailable(String),
     #[error("storage unsupported: {0}")]
     Unsupported(String),
+    #[error("storage invalid input: {0}")]
+    InvalidInput(String),
+    #[error("storage not found: {0}")]
+    NotFound(String),
+    #[error("storage conflict: {0}")]
+    Conflict(String),
+    #[error("storage corruption: {0}")]
+    Corruption(String),
 }
 
 #[derive(Debug, Error)]
@@ -39,9 +47,22 @@ impl AppError {
             ),
             Self::BadRequest(msg) => ("INVALID_INPUT", msg, json!({})),
             Self::Storage(err) => (
-                "PERMANENT",
+                match &err {
+                    StorageError::InvalidInput(_) => "INVALID_INPUT",
+                    StorageError::NotFound(_) => "NOT_FOUND",
+                    StorageError::Conflict(_) => "CONFLICT",
+                    StorageError::Corruption(_) => "PERMANENT",
+                    StorageError::Unavailable(_) | StorageError::Unsupported(_) => "PERMANENT",
+                },
                 err.to_string(),
-                json!({"component": "storage"}),
+                match &err {
+                    StorageError::InvalidInput(message) => json!({
+                        "component": "storage",
+                        "kind": "validation",
+                        "violations": [message],
+                    }),
+                    _ => json!({"component": "storage"}),
+                },
             ),
         };
 

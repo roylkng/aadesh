@@ -22,9 +22,21 @@ pub async fn require_root_owner(
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
-        .map(str::trim);
+        .map(str::trim)
+        .map(ToOwned::to_owned)
+        .or_else(|| {
+            request.uri().query().and_then(|query| {
+                query.split('&').find_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    match (parts.next(), parts.next()) {
+                        (Some("access_token"), Some(value)) => Some(value.to_string()),
+                        _ => None,
+                    }
+                })
+            })
+        });
 
-    if provided == Some(state.config.root_owner_token.as_str()) {
+    if provided.as_deref() == Some(state.config.root_owner_token.as_str()) {
         return next.run(request).await;
     }
 

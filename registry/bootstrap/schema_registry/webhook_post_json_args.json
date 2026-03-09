@@ -1,0 +1,21 @@
+{
+  "schema_ref": "schema:sha256:adesh-webhook-post-json-args-v0_1",
+  "schema_kind": "action_args",
+  "name": "webhook.post_json.args",
+  "semver": "0.1.0",
+  "content_hash": "bootstrap:schema:sha256:adesh-webhook-post-json-args-v0_1",
+  "status": "active",
+  "compatibility": "exact",
+  "payload_json": {
+    "type": "object",
+    "required": ["url", "payload"],
+    "additionalProperties": false,
+    "properties": {
+      "url": {"type": "string"},
+      "payload": {"type": "object"},
+      "headers": {
+        "type": "object"
+      }
+    }
+  }
+}

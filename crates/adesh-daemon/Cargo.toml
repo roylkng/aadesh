@@ -9,11 +9,14 @@ adesh-contracts = { path = "../adesh-contracts" }
 adesh-core = { path = "../adesh-core" }
 adesh-storage-sqlite = { path = "../adesh-storage-sqlite" }
 anyhow.workspace = true
+async-trait.workspace = true
 axum.workspace = true
 chrono.workspace = true
 http.workspace = true
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 sqlx.workspace = true
 tokio.workspace = true
 tracing.workspace = true
@@ -21,5 +24,7 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+futures-util = "0.3"
 http-body-util.workspace = true
+tokio-tungstenite = "0.28"
 tower.workspace = true

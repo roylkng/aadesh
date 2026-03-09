@@ -7,5 +7,7 @@ license.workspace = true
 [dependencies]
 adesh-contracts = { path = "../adesh-contracts" }
 async-trait.workspace = true
+chrono.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true

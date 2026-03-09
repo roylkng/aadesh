@@ -1,0 +1,22 @@
+{
+  "schema_ref": "schema:sha256:adesh-webhook-post-json-result-v0_1",
+  "schema_kind": "action_result",
+  "name": "webhook.post_json.result",
+  "semver": "0.1.0",
+  "content_hash": "bootstrap:schema:sha256:adesh-webhook-post-json-result-v0_1",
+  "status": "active",
+  "compatibility": "exact",
+  "payload_json": {
+    "type": "object",
+    "required": ["provider", "delivery_state", "status_code", "url", "idempotency_supported"],
+    "additionalProperties": false,
+    "properties": {
+      "provider": {"type": "string"},
+      "delivery_state": {"type": "string"},
+      "status_code": {"type": "integer"},
+      "url": {"type": "string"},
+      "idempotency_supported": {"type": "boolean"},
+      "syscall_id": {"type": "string"}
+    }
+  }
+}

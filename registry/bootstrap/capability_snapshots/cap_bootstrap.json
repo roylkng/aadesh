@@ -1,0 +1,55 @@
+{
+  "capability_snapshot_version": "cap:bootstrap",
+  "capabilities": [
+    {
+      "tool_name": "email",
+      "actions": [
+        {
+          "action_name": "send",
+          "args_schema_ref": "schema:sha256:adesh-email-send-payload-v0_1",
+          "result_schema_ref": "schema:sha256:adesh-email-send-result-v0_1",
+          "diff_supported": true,
+          "execution_class": "external_api",
+          "default_approval_mode": "diff",
+          "diff_kind": "email_send_payload",
+          "editable_payload_schema": {
+            "type": "object",
+            "required": ["to", "cc", "bcc", "subject", "body"],
+            "additionalProperties": false,
+            "properties": {
+              "to": {"type": "array", "items": {"type": "string"}},
+              "cc": {"type": "array", "items": {"type": "string"}},
+              "bcc": {"type": "array", "items": {"type": "string"}},
+              "subject": {"type": "string"},
+              "body": {"type": "string"}
+            }
+          }
+        }
+      ]
+    },
+    {
+      "tool_name": "webhook",
+      "actions": [
+        {
+          "action_name": "post_json",
+          "args_schema_ref": "schema:sha256:adesh-webhook-post-json-args-v0_1",
+          "result_schema_ref": "schema:sha256:adesh-webhook-post-json-result-v0_1",
+          "diff_supported": false,
+          "execution_class": "external_api",
+          "default_approval_mode": "confirm",
+          "diff_kind": "webhook_post_json_payload",
+          "editable_payload_schema": {
+            "type": "object",
+            "required": ["url", "payload"],
+            "additionalProperties": false,
+            "properties": {
+              "url": {"type": "string"},
+              "payload": {"type": "object"},
+              "headers": {"type": "object"}
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

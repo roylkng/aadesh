@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Adesh OS</title>
+  <style>
+    :root {
+      --bg-app: #17131f;
+      --bg-canvas: #1b1624;
+      --bg-elevated: #20192c;
+      --bg-deep: #120f18;
+
+      --surface-1: #241d31;
+      --surface-2: #2c233b;
+      --surface-3: #332847;
+      --surface-4: #3a2e52;
+
+      --border-subtle: rgba(205, 196, 255, 0.08);
+      --border-default: rgba(205, 196, 255, 0.14);
+      --border-strong: rgba(205, 196, 255, 0.22);
+      --border-active: rgba(25, 227, 255, 0.42);
+
+      --signal-cyan-1: #19e3ff;
+      --signal-cyan-2: #0cd0ff;
+      --signal-cyan-3: #6cecff;
+      --signal-teal-1: #18d7c8;
+
+      --reason-violet-1: #9b6cff;
+      --reason-violet-2: #7c4dff;
+      --reason-indigo-1: #5b6dff;
+
+      --human-orange-1: #ff7a3c;
+      --human-orange-2: #ff8c42;
+      --human-amber-1: #ffc168;
+
+      --success: #2ed6a1;
+      --warning: #ffb454;
+      --danger: #ff5e73;
+      --info: #56b8ff;
+
+      --text-primary: #f3efff;
+      --text-secondary: #c8c2dc;
+      --text-muted: #938ca9;
+      --text-disabled: #676177;
+      --text-on-accent: #0f1117;
+
+      --glow-cyan-soft: 0 0 0 1px rgba(25,227,255,0.20), 0 0 18px rgba(25,227,255,0.14);
+      --glow-cyan-medium: 0 0 0 1px rgba(25,227,255,0.32), 0 0 26px rgba(25,227,255,0.22);
+      --glow-violet-soft: 0 0 0 1px rgba(155,108,255,0.22), 0 0 18px rgba(155,108,255,0.12);
+      --glow-orange-soft: 0 0 0 1px rgba(255,122,60,0.24), 0 0 18px rgba(255,122,60,0.16);
+
+      --font-display-xl: 32px;
+      --font-h1: 24px;
+      --font-h2: 20px;
+      --font-body: 14px;
+      --font-caption: 12px;
+
+      --space-4: 4px;
+      --space-8: 8px;
+      --space-12: 12px;
+      --space-16: 16px;
+      --space-20: 20px;
+      --space-24: 24px;
+
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+
+      --ui-accent-1: var(--signal-cyan-1);
+      --ui-accent-2: var(--signal-cyan-2);
+      --ui-accent-glow: var(--glow-cyan-soft);
+      --ui-panel-padding: var(--space-16);
+      --ui-card-padding: var(--space-12);
+      --ui-row-gap: var(--space-12);
+      --ui-transition-fast: 140ms cubic-bezier(0.22, 1, 0.36, 1);
+      --ui-transition-medium: 220ms cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    body[data-density="compact"] {
+      --ui-panel-padding: var(--space-12);
+      --ui-card-padding: var(--space-8);
+      --ui-row-gap: var(--space-8);
+    }
+    body[data-accent="violet"] {
+      --ui-accent-1: var(--reason-violet-1);
+      --ui-accent-2: var(--reason-violet-2);
+      --ui-accent-glow: var(--glow-violet-soft);
+      --border-active: rgba(155, 108, 255, 0.42);
+    }
+    body[data-accent="human"] {
+      --ui-accent-1: var(--human-orange-1);
+      --ui-accent-2: var(--human-orange-2);
+      --ui-accent-glow: var(--glow-orange-soft);
+      --border-active: rgba(255, 122, 60, 0.42);
+    }
+    body[data-motion="reduced"] *, body[data-motion="reduced"] *::before, body[data-motion="reduced"] *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      :root {
+        --ui-transition-fast: 0ms;
+        --ui-transition-medium: 0ms;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Inter", "IBM Plex Sans", "Segoe UI", sans-serif;
+      font-size: var(--font-body);
+      color: var(--text-primary);
+      background: radial-gradient(circle at top, #231b33 0%, var(--bg-canvas) 38%, var(--bg-app) 100%);
+    }
+    .shell {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: var(--space-24);
+      display: grid;
+      gap: var(--space-16);
+    }
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+    }
+    h1 { margin: 0; font-size: var(--font-h1); }
+    .sub { color: var(--text-secondary); max-width: 48rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: var(--space-16);
+    }
+    .panel {
+      background: linear-gradient(180deg, var(--surface-2) 0%, var(--surface-1) 100%);
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-lg);
+      padding: var(--ui-panel-padding);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.30), inset 0 1px 0 rgba(255,255,255,0.04);
+      transition: border-color var(--ui-transition-fast), box-shadow var(--ui-transition-fast);
+    }
+    .panel h2 { margin-top: 0; font-size: var(--font-caption); text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-secondary); }
+    label { display: block; font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 6px; }
+    input, textarea, button, select {
+      width: 100%;
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      padding: 10px 12px;
+      font: inherit;
+      background: rgba(18, 15, 24, 0.88);
+      color: var(--text-primary);
+      transition: border-color var(--ui-transition-fast), box-shadow var(--ui-transition-fast);
+    }
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--border-active);
+      box-shadow: 0 0 0 3px rgba(25,227,255,0.10);
+      outline: none;
+    }
+    textarea { min-height: 120px; resize: vertical; }
+    button {
+      cursor: pointer;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--ui-accent-1) 28%, transparent), color-mix(in srgb, var(--ui-accent-2) 18%, transparent));
+      color: var(--text-primary);
+      border: 1px solid color-mix(in srgb, var(--ui-accent-1) 42%, transparent);
+      font-weight: 600;
+      box-shadow: var(--ui-accent-glow);
+    }
+    button:hover { box-shadow: var(--glow-cyan-medium); }
+    button.secondary {
+      background: linear-gradient(180deg, var(--surface-3) 0%, var(--surface-2) 100%);
+      color: var(--text-primary);
+      border: 1px solid var(--border-strong);
+      box-shadow: none;
+    }
+    .row { display: grid; gap: var(--ui-row-gap); margin-bottom: var(--space-12); }
+    .two { grid-template-columns: 1fr 1fr; }
+    .three { grid-template-columns: repeat(3, 1fr); }
+    .status { padding: 10px 12px; border-radius: var(--radius-md); font-size: 0.9rem; border: 1px solid var(--border-subtle); }
+    .status.ok { background: rgba(46, 214, 161, 0.12); color: var(--success); }
+    .status.warn { background: rgba(255, 180, 84, 0.12); color: var(--warning); }
+    .status.err { background: rgba(255, 94, 115, 0.12); color: var(--danger); }
+    .card {
+      border: 1px solid var(--border-default);
+      border-radius: var(--radius-md);
+      padding: var(--ui-card-padding);
+      background: rgba(18, 15, 24, 0.70);
+      margin-top: 10px;
+    }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: "JetBrains Mono", "IBM Plex Mono", monospace;
+      font-size: 0.86rem;
+    }
+    .mono { font-family: "JetBrains Mono", "IBM Plex Mono", monospace; }
+    .stack { display: grid; gap: 10px; }
+    .actions { display: flex; gap: var(--space-8); flex-wrap: wrap; }
+    .actions button { width: auto; }
+    @media (max-width: 900px) {
+      .grid { grid-template-columns: 1fr; }
+      .three { grid-template-columns: 1fr; }
+      .hero { align-items: start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="hero">
+      <div>
+        <h1>Adesh OS Email Wedge</h1>
+        <div class="sub">Draft email requests, inspect persisted reasoning output, and approve or deny staged sends against the localhost daemon.</div>
+      </div>
+      <div id="health" class="status warn">Loading health...</div>
+    </div>
+
+    <div class="grid">
+      <section class="panel">
+        <h2>Compose Request</h2>
+        <div class="row two">
+          <div>
+            <label for="token">Root Owner token</label>
+            <input id="token" placeholder="dev-root-owner-token">
+          </div>
+          <div>
+            <label for="requestId">Request ID</label>
+            <input id="requestId">
+          </div>
+        </div>
+        <div class="row">
+          <label for="prompt">Request content</label>
+          <textarea id="prompt">Draft and send a concise follow-up email confirming tomorrow's meeting and asking for agenda items.</textarea>
+        </div>
+        <div class="row two">
+          <button id="submitRequest">Submit request</button>
+          <button id="refreshAll" class="secondary">Refresh approvals and last operation</button>
+        </div>
+        <div class="row three">
+          <div>
+            <label for="density">Density</label>
+            <select id="density">
+              <option value="comfortable">Comfortable</option>
+              <option value="compact">Compact</option>
+            </select>
+          </div>
+          <div>
+            <label for="motion">Motion</label>
+            <select id="motion">
+              <option value="default">Default</option>
+              <option value="reduced">Reduced</option>
+            </select>
+          </div>
+          <div>
+            <label for="accent">Accent</label>
+            <select id="accent">
+              <option value="cyan">Machine Cyan</option>
+              <option value="violet">Reason Violet</option>
+              <option value="human">Human Orange</option>
+            </select>
+          </div>
+        </div>
+        <div id="requestStatus" class="status warn">Idle</div>
+      </section>
+
+      <section class="panel">
+        <h2>Current Operation</h2>
+        <div class="stack">
+          <div><strong>Operation:</strong> <span id="operationId" class="mono">none</span></div>
+          <div><strong>State:</strong> <span id="operationState">unknown</span></div>
+          <div><strong>Audit trace:</strong> <span id="auditTraceId" class="mono">none</span></div>
+        </div>
+        <div class="card">
+          <strong>Draft / reasoning output</strong>
+          <pre id="reasoningOutput">No reasoning output loaded.</pre>
+        </div>
+        <div class="card">
+          <strong>Syscalls</strong>
+          <pre id="syscalls">[]</pre>
+        </div>
+      </section>
+    </div>
+
+    <section class="panel">
+      <h2>Pending Approvals</h2>
+      <div id="approvals" class="stack"></div>
+    </section>
+
+    <div class="grid">
+      <section class="panel">
+        <h2>Current Capabilities</h2>
+        <div><strong>Active snapshot:</strong> <span id="capabilitySnapshotVersion" class="mono">unknown</span></div>
+        <div class="card">
+          <pre id="capabilityPayload">No capability snapshot loaded.</pre>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Review Queue</h2>
+        <div id="reviewQueue" class="stack"></div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const state = {
+      lastOperationId: localStorage.getItem('adesh.lastOperationId') || '',
+      lastAuditTraceId: localStorage.getItem('adesh.lastAuditTraceId') || ''
+    };
+
+    const tokenEl = document.getElementById('token');
+    const requestIdEl = document.getElementById('requestId');
+    const promptEl = document.getElementById('prompt');
+    const requestStatusEl = document.getElementById('requestStatus');
+    const densityEl = document.getElementById('density');
+    const motionEl = document.getElementById('motion');
+    const accentEl = document.getElementById('accent');
+    const healthEl = document.getElementById('health');
+    const operationIdEl = document.getElementById('operationId');
+    const operationStateEl = document.getElementById('operationState');
+    const auditTraceIdEl = document.getElementById('auditTraceId');
+    const reasoningOutputEl = document.getElementById('reasoningOutput');
+    const syscallsEl = document.getElementById('syscalls');
+    const approvalsEl = document.getElementById('approvals');
+    const capabilitySnapshotVersionEl = document.getElementById('capabilitySnapshotVersion');
+    const capabilityPayloadEl = document.getElementById('capabilityPayload');
+    const reviewQueueEl = document.getElementById('reviewQueue');
+
+    tokenEl.value = localStorage.getItem('adesh.token') || 'dev-root-owner-token';
+    requestIdEl.value = `req-ui-${Date.now()}`;
+    densityEl.value = localStorage.getItem('adesh.ui.density') || 'comfortable';
+    motionEl.value = localStorage.getItem('adesh.ui.motion') || 'default';
+    accentEl.value = localStorage.getItem('adesh.ui.accent') || 'cyan';
+
+    tokenEl.addEventListener('change', () => localStorage.setItem('adesh.token', tokenEl.value));
+
+    function applyUiPreferences() {
+      document.body.dataset.density = densityEl.value;
+      document.body.dataset.motion = motionEl.value;
+      document.body.dataset.accent = accentEl.value;
+    }
+
+    densityEl.addEventListener('change', () => {
+      localStorage.setItem('adesh.ui.density', densityEl.value);
+      applyUiPreferences();
+    });
+    motionEl.addEventListener('change', () => {
+      localStorage.setItem('adesh.ui.motion', motionEl.value);
+      applyUiPreferences();
+    });
+    accentEl.addEventListener('change', () => {
+      localStorage.setItem('adesh.ui.accent', accentEl.value);
+      applyUiPreferences();
+    });
+
+    function setStatus(el, cls, text) {
+      el.className = `status ${cls}`;
+      el.textContent = text;
+    }
+
+    function authHeaders(extra = {}) {
+      return {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${tokenEl.value}`,
+        ...extra,
+      };
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, options);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = body?.error?.message || body?.message || `HTTP ${response.status}`;
+        throw new Error(message);
+      }
+      return body;
+    }
+
+    async function refreshHealth() {
+      try {
+        const body = await api('/v1/health');
+        setStatus(healthEl, body.data.status === 'ok' ? 'ok' : 'warn', `Health: ${body.data.status} | model ${body.data.model_provider} | tool ${body.data.tool_provider}`);
+      } catch (error) {
+        setStatus(healthEl, 'err', `Health error: ${error.message}`);
+      }
+    }
+
+    async function refreshCapabilities() {
+      try {
+        const body = await api('/v1/capabilities', { headers: authHeaders() });
+        capabilitySnapshotVersionEl.textContent = body.data.capability_snapshot_version;
+        capabilityPayloadEl.textContent = JSON.stringify(body.data.payload, null, 2);
+      } catch (error) {
+        capabilitySnapshotVersionEl.textContent = 'error';
+        capabilityPayloadEl.textContent = `Capability refresh failed: ${error.message}`;
+      }
+    }
+
+    async function loadOperation(operationId) {
+      if (!operationId) return;
+      const op = await api(`/v1/operations/${operationId}`, { headers: authHeaders() });
+      state.lastOperationId = operationId;
+      state.lastAuditTraceId = op.data.audit_trace_id;
+      localStorage.setItem('adesh.lastOperationId', operationId);
+      localStorage.setItem('adesh.lastAuditTraceId', op.data.audit_trace_id);
+      operationIdEl.textContent = op.data.operation_id;
+      operationStateEl.textContent = `${op.data.state}${op.data.state_reason ? ` (${op.data.state_reason})` : ''}`;
+      auditTraceIdEl.textContent = op.data.audit_trace_id;
+
+      try {
+        const reasoning = await api(`/v1/operations/${operationId}/reasoning-output`, { headers: authHeaders() });
+        reasoningOutputEl.textContent = JSON.stringify(reasoning.data.reasoning_output, null, 2);
+      } catch {
+        reasoningOutputEl.textContent = 'No reasoning output available.';
+      }
+
+      try {
+        const syscalls = await api(`/v1/operations/${operationId}/syscalls`, { headers: authHeaders() });
+        syscallsEl.textContent = JSON.stringify(syscalls.data, null, 2);
+      } catch {
+        syscallsEl.textContent = '[]';
+      }
+    }
+
+    function approvalCard(approval) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `
+        <div><strong>${approval.approval_id}</strong></div>
+        <div>Operation: <span class="mono">${approval.operation_id}</span></div>
+        <div>Mode: ${approval.approval_mode}</div>
+        <div>${approval.prompt}</div>
+        <pre>${JSON.stringify(approval.diff, null, 2)}</pre>
+        <div class="actions">
+          <button data-decision="approve">Approve</button>
+          <button data-decision="deny" class="secondary">Deny</button>
+        </div>
+      `;
+      for (const button of card.querySelectorAll('button')) {
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try {
+            await api(`/v1/approvals/${approval.approval_id}`, {
+              method: 'POST',
+              headers: authHeaders({ 'Idempotency-Key': `ui-${approval.approval_id}-${button.dataset.decision}` }),
+              body: JSON.stringify({ decision: button.dataset.decision, modified_payload: null, oob: null })
+            });
+            await refreshApprovals();
+            await loadOperation(approval.operation_id);
+          } catch (error) {
+            alert(`Approval failed: ${error.message}`);
+          } finally {
+            button.disabled = false;
+          }
+        });
+      }
+      return card;
+    }
+
+    async function refreshApprovals() {
+      approvalsEl.innerHTML = '';
+      try {
+        const approvals = await api('/v1/approvals/pending', { headers: authHeaders() });
+        if (!approvals.data.length) {
+          approvalsEl.innerHTML = '<div class="status ok">No pending approvals.</div>';
+          return;
+        }
+        approvals.data.forEach(item => approvalsEl.appendChild(approvalCard(item)));
+      } catch (error) {
+        approvalsEl.innerHTML = `<div class="status err">Approval refresh failed: ${error.message}</div>`;
+      }
+    }
+
+    function reviewCard(item) {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `
+        <div><strong>${item.item_id}</strong></div>
+        <div>Domain: ${item.target_domain}</div>
+        <div>Status: ${item.status}</div>
+        <div>Source: ${item.source}</div>
+        <div>Risk/Sensitivity: R${item.risk_r_estimate} / S${item.sensitivity_s_estimate}</div>
+        <div class="actions">
+          <button data-decision="approve">Approve</button>
+          <button data-decision="reject" class="secondary">Reject</button>
+        </div>
+      `;
+      for (const button of card.querySelectorAll('button')) {
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try {
+            await api(`/v1/review-queue/${item.item_id}/decide`, {
+              method: 'POST',
+              headers: authHeaders({ 'Idempotency-Key': `ui-review-${item.item_id}-${button.dataset.decision}` }),
+              body: JSON.stringify({ decision: button.dataset.decision, edited_payload: null, oob: null })
+            });
+            await Promise.all([refreshReviewQueue(), refreshCapabilities()]);
+          } catch (error) {
+            alert(`Review decision failed: ${error.message}`);
+          } finally {
+            button.disabled = false;
+          }
+        });
+      }
+      return card;
+    }
+
+    async function refreshReviewQueue() {
+      reviewQueueEl.innerHTML = '';
+      try {
+        const body = await api('/v1/review-queue?status=pending', { headers: authHeaders() });
+        if (!body.data.length) {
+          reviewQueueEl.innerHTML = '<div class="status ok">No pending review items.</div>';
+          return;
+        }
+        body.data.forEach(item => reviewQueueEl.appendChild(reviewCard(item)));
+      } catch (error) {
+        reviewQueueEl.innerHTML = `<div class="status err">Review queue refresh failed: ${error.message}</div>`;
+      }
+    }
+
+    function connectEvents() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const token = encodeURIComponent(tokenEl.value);
+      const socket = new WebSocket(`${proto}://${location.host}/v1/events?access_token=${token}`);
+
+      socket.addEventListener('message', async (event) => {
+        try {
+          const envelope = JSON.parse(event.data);
+          if (envelope.type === 'hello') {
+            setStatus(healthEl, 'ok', `Health: live events connected | snapshot ${envelope.data.capability_snapshot_version}`);
+            return;
+          }
+
+          if (envelope.operation_id) {
+            state.lastOperationId = envelope.operation_id;
+            localStorage.setItem('adesh.lastOperationId', envelope.operation_id);
+            await loadOperation(envelope.operation_id);
+          }
+
+          if (
+            envelope.type === 'approval_required' ||
+            envelope.type === 'approval_granted' ||
+            envelope.type === 'approval_denied' ||
+            envelope.type === 'syscall_executed' ||
+            envelope.type === 'operation_state'
+          ) {
+            await refreshApprovals();
+          }
+
+          if (envelope.type === 'review_queue_update') {
+            await refreshReviewQueue();
+          }
+
+          if (envelope.type === 'capability_update') {
+            await refreshCapabilities();
+          }
+        } catch (error) {
+          console.error('event handling failed', error);
+        }
+      });
+
+      socket.addEventListener('close', () => {
+        setTimeout(connectEvents, 1500);
+      });
+
+      socket.addEventListener('error', () => {
+        socket.close();
+      });
+    }
+
+    document.getElementById('submitRequest').addEventListener('click', async () => {
+      const requestId = requestIdEl.value || `req-ui-${Date.now()}`;
+      requestIdEl.value = requestId;
+      setStatus(requestStatusEl, 'warn', 'Submitting request...');
+      try {
+        const response = await api('/v1/requests', {
+          method: 'POST',
+          headers: authHeaders({ 'Idempotency-Key': requestId }),
+          body: JSON.stringify({
+            request_id: requestId,
+            source: { channel: 'http', transport: 'rest' },
+            received_at: new Date().toISOString(),
+            requesting_principal: { principal_type: 'root_owner', principal_id: 'owner-1' },
+            requesting_audience_id: 'root_owner',
+            input: { kind: 'text', content: promptEl.value },
+            constraints: { policy_mode: 'default', budgets: { token_budget: 512 } }
+          })
+        });
+        setStatus(requestStatusEl, 'ok', `Created ${response.data.primary_operation_id}`);
+        await loadOperation(response.data.primary_operation_id);
+        await refreshApprovals();
+      } catch (error) {
+        setStatus(requestStatusEl, 'err', `Request failed: ${error.message}`);
+      }
+    });
+
+    document.getElementById('refreshAll').addEventListener('click', async () => {
+      await Promise.all([
+        refreshHealth(),
+        refreshApprovals(),
+        refreshReviewQueue(),
+        refreshCapabilities(),
+        loadOperation(state.lastOperationId)
+      ]);
+    });
+
+    refreshHealth();
+    refreshApprovals();
+    refreshReviewQueue();
+    refreshCapabilities();
+    applyUiPreferences();
+    connectEvents();
+    if (state.lastOperationId) {
+      loadOperation(state.lastOperationId);
+    }
+  </script>
+</body>
+</html>

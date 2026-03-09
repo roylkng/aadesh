@@ -1,0 +1,21 @@
+{
+  "schema_ref": "schema:sha256:adesh-email-send-payload-v0_1",
+  "schema_kind": "action_args",
+  "name": "email.send.args",
+  "semver": "0.1.0",
+  "content_hash": "bootstrap:schema:sha256:adesh-email-send-payload-v0_1",
+  "status": "active",
+  "compatibility": "exact",
+  "payload_json": {
+    "type": "object",
+    "required": ["to", "cc", "bcc", "subject", "body"],
+    "additionalProperties": false,
+    "properties": {
+      "to": {"type": "array", "items": {"type": "string"}},
+      "cc": {"type": "array", "items": {"type": "string"}},
+      "bcc": {"type": "array", "items": {"type": "string"}},
+      "subject": {"type": "string"},
+      "body": {"type": "string"}
+    }
+  }
+}

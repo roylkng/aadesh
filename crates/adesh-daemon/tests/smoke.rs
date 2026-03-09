@@ -7,6 +7,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
+use serde_json::Value;
 use tower::ServiceExt;
 
 fn test_config() -> AppConfig {
@@ -16,6 +17,16 @@ fn test_config() -> AppConfig {
         database_url: "sqlite::memory:".to_string(),
         server_version: "test".to_string(),
         capability_snapshot_version: "cap:bootstrap".to_string(),
+        model_provider_backend: "fake".to_string(),
+        model_provider_base_url: "http://127.0.0.1:1234".to_string(),
+        model_provider_model: "qwen/qwen3.5-35b-a3b".to_string(),
+        email_provider_backend: "fake".to_string(),
+        email_from_address: "adesh@example.invalid".to_string(),
+        email_smtp_host: "127.0.0.1".to_string(),
+        email_smtp_port: 1025,
+        email_smtp_username: None,
+        email_smtp_password: None,
+        webhook_provider_backend: "fake".to_string(),
     }
 }
 
@@ -38,6 +49,72 @@ async fn health_endpoint_is_public() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+    let body: Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(body["data"]["status"], "ok");
+    assert_eq!(body["data"]["storage"], "ok");
+    assert_eq!(body["data"]["model_provider"], "ok");
+    assert_eq!(body["data"]["tool_provider"], "ok");
+    assert_eq!(body["data"]["queue"], "degraded");
+}
+
+#[tokio::test]
+async fn root_ui_shell_is_public() {
+    let storage = Arc::new(SqliteStorage::connect("sqlite::memory:").await.unwrap());
+    adesh_core::ports::storage::StorageProvider::migrate(storage.as_ref())
+        .await
+        .unwrap();
+    let app = adesh_daemon_app(test_config(), storage);
+
+    let response = app
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = String::from_utf8(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(body.contains("Adesh OS Email Wedge"));
+}
+
+#[tokio::test]
+async fn root_ui_shell_exposes_adaptive_controls() {
+    let storage = Arc::new(SqliteStorage::connect("sqlite::memory:").await.unwrap());
+    adesh_core::ports::storage::StorageProvider::migrate(storage.as_ref())
+        .await
+        .unwrap();
+    let app = adesh_daemon_app(test_config(), storage);
+
+    let response = app
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = String::from_utf8(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(body.contains("id=\"density\""));
+    assert!(body.contains("id=\"motion\""));
+    assert!(body.contains("id=\"accent\""));
+    assert!(body.contains("localStorage.setItem('adesh.ui.density'"));
+    assert!(body.contains("localStorage.setItem('adesh.ui.motion'"));
+    assert!(body.contains("localStorage.setItem('adesh.ui.accent'"));
 }
 
 #[tokio::test]
@@ -74,7 +151,7 @@ async fn request_endpoint_requires_root_owner_auth() {
 }
 
 #[tokio::test]
-async fn request_endpoint_returns_scaffold_not_implemented_with_auth() {
+async fn request_endpoint_creates_operation_with_auth() {
     let storage = Arc::new(SqliteStorage::connect("sqlite::memory:").await.unwrap());
     adesh_core::ports::storage::StorageProvider::migrate(storage.as_ref())
         .await
@@ -104,12 +181,12 @@ async fn request_endpoint_returns_scaffold_not_implemented_with_auth() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(response.status(), StatusCode::CREATED);
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
     let body = String::from_utf8(bytes.to_vec()).unwrap();
-    assert!(body.contains("Milestone 1 scaffold"));
+    assert!(body.contains("\"operation_ids\""));
 }
 
 fn adesh_daemon_app(config: AppConfig, storage: Arc<SqliteStorage>) -> axum::Router {
-    adesh_daemon::http::app(config, storage)
+    adesh_daemon::http::app(config, storage).unwrap()
 }

@@ -4,6 +4,7 @@ use axum::{
     response::Response,
 };
 use chrono::Utc;
+use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use adesh_contracts::{WsEnvelope, WsHelloData};
@@ -32,5 +33,18 @@ async fn send_hello(mut socket: WebSocket, state: AppState) {
 
     if let Ok(json) = serde_json::to_string(&event) {
         let _ = socket.send(Message::Text(json.into())).await;
+    }
+
+    let mut rx = state.events.subscribe();
+    loop {
+        match rx.recv().await {
+            Ok(payload) => {
+                if socket.send(Message::Text(payload.into())).await.is_err() {
+                    break;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
     }
 }

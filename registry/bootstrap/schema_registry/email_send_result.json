@@ -1,0 +1,30 @@
+{
+  "schema_ref": "schema:sha256:adesh-email-send-result-v0_1",
+  "schema_kind": "action_result",
+  "name": "email.send.result",
+  "semver": "0.1.0",
+  "content_hash": "bootstrap:schema:sha256:adesh-email-send-result-v0_1",
+  "status": "active",
+  "compatibility": "exact",
+  "payload_json": {
+    "type": "object",
+    "required": [
+      "provider",
+      "delivery_state",
+      "from_address",
+      "recipient_count",
+      "idempotency_supported"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "provider": {"type": "string"},
+      "delivery_state": {"type": "string"},
+      "provider_message_id": {"type": ["string", "null"]},
+      "from_address": {"type": "string"},
+      "recipient_count": {"type": "integer"},
+      "idempotency_supported": {"type": "boolean"},
+      "idempotency_token": {"type": "string"},
+      "syscall_id": {"type": "string"}
+    }
+  }
+}
