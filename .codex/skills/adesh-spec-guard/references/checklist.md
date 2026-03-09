@@ -23,6 +23,9 @@ These filenames are canonical and should not regress:
 - no `pinned_state_version` field in canonical specs
 - no pasted wrapper markers like ````md id=` or `Goal understood:` in canonical docs
 - root-level specs win over `reference/` and `archive/`
+- root-level markdown files (except `README.md`, `AGENTS.md`) must be indexed in `index.md`
+- `docs/REPO_ORGANIZATION.md` and `registry/README.md` must exist
+- `.gitignore` must include `/target/`
 
 ## Milestone checks
 
