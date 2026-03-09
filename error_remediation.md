@@ -207,7 +207,7 @@ Payload:
   "choices": ["string", "..."] ,
   "default_choice": "string|null"
 }
-````
+```
 
 #### sanitize
 

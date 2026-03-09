@@ -169,12 +169,14 @@ The kernel maintains a deterministic mapping:
 - modifies_account_settings
 - sends_to_large_audience_or_external_org
 - privileged infrastructure change (deploy to prod, rotate keys) unless explicitly downgraded by policy
+- sandboxed actuator with network enabled or persistent mounts
 
 #### R2 triggers (any => at least R2)
 - has_external_side_effect AND not covered by R3/R4
 - sends_information_to_third_party (email, slack message, API write)
 - schedules/creates events or tasks in external systems
 - updates non-critical DB fields or internal records
+- sandboxed actuator execution even when network is disabled and filesystem is ephemeral
 
 #### R1 triggers
 - generative draft only (no side effect)
@@ -201,6 +203,7 @@ Where predicates are derived from:
 - declared_effect field if present
 - presence of outbound audience id
 - tool/action metadata
+- capability `execution_class` and sandbox policy metadata
 
 ---
 

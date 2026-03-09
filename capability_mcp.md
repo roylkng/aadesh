@@ -9,6 +9,8 @@ This document specifies the **Capability Self-Model** and how Adesh OS integrate
 - how syscalls map to tool capabilities deterministically
 - how external agents connect through MCP Host and become `audience_id` nodes
 
+Action-level execution schema behavior is governed jointly with `schema_based_tools_and_actions.md`.
+
 This is algorithmic logic. Not implementation code.
 
 ---
@@ -47,7 +49,7 @@ Each descriptor must be immutable within a snapshot version.
 - `endpoint_ref`: stable reference to the MCP server instance or adapter
 - `status`: `enabled|disabled|degraded`
 - `trust_class`: `trusted|semi_trusted|untrusted`
-- `schema_ref`: pointer to tool schema document (see Section 2)
+- `schema_ref`: pointer to the capability-level tool schema bundle or descriptor document (see Section 2)
 - `rate_limits`:
   - `max_calls_per_minute`
   - `max_concurrent`
@@ -63,6 +65,7 @@ Each descriptor must be immutable within a snapshot version.
 ### 1.3 Actuator-specific fields
 - `risk_floor_r` (0..4): minimum risk classification
 - `diff_supported` (bool): whether a safe diff payload can be produced
+- `execution_class`: `external_api|host_local|sandboxed`
 - `default_approval_mode`:
   - `none|confirm|diff|oob_required|refuse`
   - note: final approval_mode uses max(R,S) logic and may be stricter
@@ -70,25 +73,39 @@ Each descriptor must be immutable within a snapshot version.
   - `local|internal|external|public`
 - `audience_required` (bool): whether the syscall must declare an audience (email recipient etc.)
 
-### 1.4 Tool Action descriptors (optional but recommended)
-Within each tool schema, actions may declare:
+If `execution_class=sandboxed`, the descriptor must also include:
+- `sandbox_profile_id`
+- `filesystem_policy`
+- `network_policy`
+- `resource_budgets`
+- `artifact_capture_policy`
+
+Behavioral details are governed by `sandboxed_actuator_capability.md`.
+
+### 1.4 Tool Action descriptors
+Within each tool schema, actions must declare or resolve to:
 - `action_name`
-- required args schema
+- `args_schema_ref`
+- `result_schema_ref` (optional but recommended)
 - `risk_floor_override_r` (optional, action-level)
 - `diff_template_ref` (optional)
 - `forbidden_fields[]` (action-specific negative memory augment)
+
+`schema_based_tools_and_actions.md` defines the action-level generic execution contract. Capability snapshots pin these action-level schema refs so the kernel does not need built-in per-tool logic.
 
 ---
 
 ## 2) Tool schema storage and referencing
 
 ### 2.1 SchemaRef types
-`schema_ref` may point to:
+At the capability level, `schema_ref` may point to:
 - a blob content_ref
 - a StorageProvider object ref
 - an embedded schema id within a schema registry
 
 The schema content should be JSON Schema compatible or a deterministic equivalent.
+
+For syscall execution and approval edits, the authoritative schemas are the action-level `args_schema_ref` and optional `result_schema_ref` pinned through the capability snapshot.
 
 ### 2.2 Schema requirements
 Each tool action schema must specify:
@@ -100,6 +117,7 @@ Each tool action schema must specify:
 This supports:
 - Verification schema validation
 - Approve-with-modifications
+- generic externalized tool/action support without kernel-specific code
 
 ---
 
@@ -187,6 +205,10 @@ Required behavior:
    - update AuditTrace
    - emit WS `capability_update`
 
+For immutable snapshot candidates minted via the control plane:
+- activation of a candidate snapshot into `current_versions` must go through the review queue
+- direct current-version mutation is not allowed on the mint endpoint
+
 ---
 
 ## 6) Syscall mapping to capabilities
@@ -201,7 +223,7 @@ A proposed syscall includes:
 Verification must:
 - find the target tool descriptor in pinned snapshot
 - confirm status is enabled
-- load schema_ref and validate args for action
+- resolve action-level `args_schema_ref` from the pinned capability snapshot and validate args for action
 
 If tool not found or disabled:
 - deny with remediation:

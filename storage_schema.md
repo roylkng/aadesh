@@ -24,8 +24,11 @@
 12. `audience_graph_nodes`, `audience_graph_edges`, `audience_graph_scopes`
 13. `review_queue_items` + `review_queue_decisions`
 14. `idempotency_keys`
-15. `jobs` (reflection queue)
-16. `blob_objects` (metadata only, content in filesystem/S3)
+15. `claims` + `claim_evidence` + `claim_conflicts`
+16. `ingest_jobs` + `ingest_job_items`
+17. `artifacts`
+18. `jobs` (reflection / async work queue)
+19. `blob_objects` (metadata only, content in filesystem/S3)
 
 Minimal indexes are included below.
 
@@ -472,7 +475,109 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires
   ON idempotency_keys(expires_at);
 
 -- =========================
--- 15) Jobs queue (reflection)
+-- 15) Fact Ledger claims
+-- =========================
+CREATE TABLE IF NOT EXISTS claims (
+  claim_id TEXT PRIMARY KEY,
+  claim_type TEXT NOT NULL,
+  claim_key TEXT NOT NULL,
+  status TEXT NOT NULL,               -- candidate|accepted|deprecated|rejected
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  created_by TEXT NOT NULL,           -- reflection|owner
+  confidence REAL NOT NULL,
+  value_json TEXT NOT NULL,
+  context_predicates_json TEXT NOT NULL,
+  time_start TEXT,
+  time_end TEXT,
+  evidence_quality_json TEXT NOT NULL,
+  promotion_ref TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_claims_key_status
+  ON claims(claim_key, status);
+
+CREATE INDEX IF NOT EXISTS idx_claims_type_status
+  ON claims(claim_type, status);
+
+CREATE TABLE IF NOT EXISTS claim_evidence (
+  claim_id TEXT NOT NULL,
+  evidence_ref TEXT NOT NULL,
+  evidence_kind TEXT NOT NULL,        -- artifact|experience_event
+  locator_json TEXT,
+  PRIMARY KEY(claim_id, evidence_ref),
+  FOREIGN KEY(claim_id) REFERENCES claims(claim_id)
+);
+
+CREATE TABLE IF NOT EXISTS claim_conflicts (
+  claim_id TEXT NOT NULL,
+  conflicting_claim_id TEXT NOT NULL,
+  reason_code TEXT NOT NULL,
+  detected_at TEXT NOT NULL,
+  PRIMARY KEY(claim_id, conflicting_claim_id),
+  FOREIGN KEY(claim_id) REFERENCES claims(claim_id),
+  FOREIGN KEY(conflicting_claim_id) REFERENCES claims(claim_id)
+);
+
+-- =========================
+-- 16) Ingest jobs
+-- =========================
+CREATE TABLE IF NOT EXISTS ingest_jobs (
+  job_id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  status TEXT NOT NULL,               -- pending|running|completed|failed|cancelled
+  source_count INTEGER NOT NULL,
+  artifacts_total INTEGER NOT NULL,
+  artifacts_succeeded INTEGER NOT NULL,
+  artifacts_failed INTEGER NOT NULL,
+  bytes_ingested INTEGER NOT NULL,
+  options_json TEXT NOT NULL,
+  error_summary TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_jobs_status_created
+  ON ingest_jobs(status, created_at);
+
+CREATE TABLE IF NOT EXISTS ingest_job_items (
+  job_id TEXT NOT NULL,
+  item_key TEXT NOT NULL,
+  status TEXT NOT NULL,               -- pending|running|completed|failed|cancelled
+  artifact_id TEXT,
+  error_json TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(job_id, item_key),
+  FOREIGN KEY(job_id) REFERENCES ingest_jobs(job_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_job_items_status
+  ON ingest_job_items(job_id, status);
+
+-- =========================
+-- 17) Artifact registry
+-- =========================
+CREATE TABLE IF NOT EXISTS artifacts (
+  artifact_id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  ingest_job_id TEXT,
+  kind TEXT NOT NULL,
+  content_ref TEXT NOT NULL,
+  parent_artifact_id TEXT,
+  dedupe_key TEXT,
+  meta_json TEXT NOT NULL,
+  FOREIGN KEY(ingest_job_id) REFERENCES ingest_jobs(job_id),
+  FOREIGN KEY(parent_artifact_id) REFERENCES artifacts(artifact_id),
+  FOREIGN KEY(content_ref) REFERENCES blob_objects(content_ref)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_dedupe
+  ON artifacts(dedupe_key);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_job_created
+  ON artifacts(ingest_job_id, created_at);
+
+-- =========================
+-- 18) Jobs queue (reflection / async work)
 -- =========================
 CREATE TABLE IF NOT EXISTS jobs (
   job_id TEXT PRIMARY KEY,
@@ -491,7 +596,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after
   ON jobs(status, run_after);
 
 -- =========================
--- 16) Blob metadata (content stored in FS/S3)
+-- 19) Blob metadata (content stored in FS/S3)
 -- =========================
 CREATE TABLE IF NOT EXISTS blob_objects (
   content_ref TEXT PRIMARY KEY,
@@ -944,7 +1049,102 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires
   ON idempotency_keys(expires_at);
 
 -- =========================
--- 15) Jobs queue
+-- 15) Fact Ledger claims
+-- =========================
+CREATE TABLE IF NOT EXISTS claims (
+  claim_id TEXT PRIMARY KEY,
+  claim_type TEXT NOT NULL,
+  claim_key TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  created_by TEXT NOT NULL,
+  confidence DOUBLE PRECISION NOT NULL,
+  value_json JSONB NOT NULL,
+  context_predicates_json JSONB NOT NULL,
+  time_start TIMESTAMPTZ,
+  time_end TIMESTAMPTZ,
+  evidence_quality_json JSONB NOT NULL,
+  promotion_ref TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_claims_key_status
+  ON claims(claim_key, status);
+
+CREATE INDEX IF NOT EXISTS idx_claims_type_status
+  ON claims(claim_type, status);
+
+CREATE TABLE IF NOT EXISTS claim_evidence (
+  claim_id TEXT NOT NULL REFERENCES claims(claim_id),
+  evidence_ref TEXT NOT NULL,
+  evidence_kind TEXT NOT NULL,
+  locator_json JSONB,
+  PRIMARY KEY(claim_id, evidence_ref)
+);
+
+CREATE TABLE IF NOT EXISTS claim_conflicts (
+  claim_id TEXT NOT NULL REFERENCES claims(claim_id),
+  conflicting_claim_id TEXT NOT NULL REFERENCES claims(claim_id),
+  reason_code TEXT NOT NULL,
+  detected_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY(claim_id, conflicting_claim_id)
+);
+
+-- =========================
+-- 16) Ingest jobs
+-- =========================
+CREATE TABLE IF NOT EXISTS ingest_jobs (
+  job_id TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  status TEXT NOT NULL,
+  source_count INT NOT NULL,
+  artifacts_total INT NOT NULL,
+  artifacts_succeeded INT NOT NULL,
+  artifacts_failed INT NOT NULL,
+  bytes_ingested BIGINT NOT NULL,
+  options_json JSONB NOT NULL,
+  error_summary TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_jobs_status_created
+  ON ingest_jobs(status, created_at);
+
+CREATE TABLE IF NOT EXISTS ingest_job_items (
+  job_id TEXT NOT NULL REFERENCES ingest_jobs(job_id),
+  item_key TEXT NOT NULL,
+  status TEXT NOT NULL,
+  artifact_id TEXT,
+  error_json JSONB,
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY(job_id, item_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ingest_job_items_status
+  ON ingest_job_items(job_id, status);
+
+-- =========================
+-- 17) Artifact registry
+-- =========================
+CREATE TABLE IF NOT EXISTS artifacts (
+  artifact_id TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL,
+  ingest_job_id TEXT REFERENCES ingest_jobs(job_id),
+  kind TEXT NOT NULL,
+  content_ref TEXT NOT NULL REFERENCES blob_objects(content_ref),
+  parent_artifact_id TEXT REFERENCES artifacts(artifact_id),
+  dedupe_key TEXT,
+  meta_json JSONB NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_dedupe
+  ON artifacts(dedupe_key);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_job_created
+  ON artifacts(ingest_job_id, created_at);
+
+-- =========================
+-- 18) Jobs queue
 -- =========================
 CREATE TABLE IF NOT EXISTS jobs (
   job_id TEXT PRIMARY KEY,
@@ -963,7 +1163,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after
   ON jobs(status, run_after);
 
 -- =========================
--- 16) Blob metadata
+-- 19) Blob metadata
 -- =========================
 CREATE TABLE IF NOT EXISTS blob_objects (
   content_ref TEXT PRIMARY KEY,

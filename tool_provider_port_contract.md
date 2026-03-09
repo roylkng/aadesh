@@ -9,6 +9,8 @@ This document defines the **ToolProvider** port contract. ToolProvider is respon
 
 ToolProvider does not decide gates. It executes only syscalls already permitted by Verification/Governance and persisted as pre-images.
 
+Tool definitions and action schemas are externalized. The kernel and ToolProvider must not require built-in per-tool contracts beyond the stable syscall envelope and the pinned schemas described in `schema_based_tools_and_actions.md`.
+
 This is interface and logic documentation. Not implementation code.
 
 ---
@@ -61,6 +63,7 @@ Output:
 
 Semantics:
 - Validate tool/action exists in pinned capability snapshot (or fail fast)
+- Resolve the action-level `args_schema_ref` / `result_schema_ref` pinned for that capability
 - Enforce timeouts and concurrency limits
 - Execute via MCP client call or internal adapter
 - Return structured output with classification and references
@@ -82,6 +85,13 @@ Used for capability degraded status and discovery.
 
 ### 2.3 discover_tools (MCP client, optional here)
 Tool discovery may be separate from execution; capability registry spec governs discovery.
+
+### 2.4 sandboxed actuator execution
+If a capability descriptor declares `execution_class=sandboxed`, ToolProvider must:
+- create or attach to a governed sandbox session
+- pass sensitive inputs as artifact refs, not raw inline secrets
+- enforce sandbox filesystem, network, and resource policies
+- return captured stdout/stderr and change summaries as persisted refs or structured metadata
 
 ---
 
@@ -191,6 +201,12 @@ Tools can be untrusted. ToolProvider must treat tool outputs as tainted per trus
 
 4. **Schema conformance**
 ToolProvider must validate that tool responses match expected response shapes when defined, otherwise mark as Corruption.
+
+5. **Sandbox containment**
+For sandboxed actuators:
+- host filesystem access outside mounted dirs must be denied
+- network must default to disabled unless explicitly allowed by capability policy
+- captured execution traces must exclude raw secrets
 
 ---
 

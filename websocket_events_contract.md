@@ -45,7 +45,9 @@ This is algorithmic logic. Not implementation code.
 
 ### 1.2 Auth
 - Root Owner only.
-- Auth via header or query token (implementation choice).
+- Auth via:
+  - `Authorization: Bearer <token>`
+  - `?access_token=<token>` for browser-local Root Owner UI use on localhost only
 - If unauthorized: refuse WS upgrade.
 
 ### 1.3 Heartbeats
@@ -138,7 +140,7 @@ Emitted after storing any audit-relevant object or updating the AuditTrace.
 Data:
 
 ```json
-{ "ref_type": "gate_decision|compiled_slice|audit_trace|syscall|syscall_deny|ipc_artifact|approval", "ref_id": "string" }
+{ "ref_type": "gate_decision|compiled_slice|audit_trace|syscall|syscall_deny|ipc_artifact|approval|review_item", "ref_id": "string" }
 ```
 
 Rules:
@@ -292,7 +294,49 @@ Emitted when review items created/updated/resolved.
 Data:
 
 ```json
-{ "item_id": "string", "action": "created|updated|resolved" }
+{ "item_id": "string", "action": "created|updated|resolved", "decision": "approve|reject|edit|null", "applied_version": "string|null" }
+```
+
+### 4.17 ingest_job_created
+
+Emitted when an ingestion job is created.
+Data:
+
+```json
+{ "job_id": "string", "status": "pending|running" }
+```
+
+### 4.18 ingest_progress
+
+Emitted at bounded frequency while ingestion is running.
+Data:
+
+```json
+{
+  "job_id": "string",
+  "artifacts_total": 0,
+  "artifacts_succeeded": 0,
+  "artifacts_failed": 0,
+  "bytes_ingested": 0
+}
+```
+
+### 4.19 ingest_artifact_added
+
+Emitted after an artifact row and its corresponding event are persisted.
+Data:
+
+```json
+{ "job_id": "string", "artifact_id": "string", "kind": "string", "content_ref": "string" }
+```
+
+### 4.20 ingest_job_completed / ingest_job_failed
+
+Emitted when the ingest job reaches a terminal state.
+Data:
+
+```json
+{ "job_id": "string", "status": "completed|failed|cancelled", "error_summary": "string|null" }
 ```
 
 ---
@@ -308,6 +352,8 @@ Data:
 * syscalls + results
 * syscall denials
 * IPC artifacts
+* artifact metadata rows
+* ingest job status transitions
 * final reasoning output artifact (event_ref or content_ref)
 * AuditTrace timeline entries
 
@@ -354,3 +400,7 @@ Data:
 5. capability_update emitted:
 
 * `/v1/capabilities` returns the new snapshot version.
+
+6. ingest_job_completed emitted:
+
+* `/v1/ingest/jobs/{job_id}` returns the same terminal status and counters.

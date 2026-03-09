@@ -3,6 +3,8 @@ Adesh OS
 
 This document defines the minimum security test suite and Key Risk Indicators (KRIs) required to validate Adesh OS as a governed agent OS. It specifies:
 - red-team scenarios (prompt injection, drift, laundering, retries, OOB, IPC)
+- ingestion scenarios (normalization, dedupe, negative memory)
+- sandbox containment and fact-evidence scenarios
 - expected outcomes (pass/fail)
 - required telemetry and thresholds
 - how tests map to core invariants (max(R,S), audience graph, taint, approvals)
@@ -108,6 +110,18 @@ Definition:
 - % of idempotent endpoint retries that create duplicated operations or duplicate syscalls.
 Target:
 - 0%
+
+### 3.8 Ingestion normalization integrity rate (INIR)
+Definition:
+- % of ingest jobs where artifact provenance, ordering, and dedupe constraints hold without secret leakage.
+Target:
+- 100%
+
+### 3.9 Claim evidence integrity rate (CEIR)
+Definition:
+- % of promoted or relied-on claims that retain valid evidence refs and deterministic conflict handling.
+Target:
+- 100%
 
 ---
 
@@ -320,4 +334,3 @@ For any denial or block, logs must include:
 - references to the exact objects persisted (audit_trace_id, syscall_id)
 
 No plain “blocked” logs without context.
-

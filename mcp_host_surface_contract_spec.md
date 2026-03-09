@@ -90,7 +90,7 @@ Input:
   "requested_scopes": ["scope:string", "..."],
   "target_audience_hint": "string|null"
 }
-````
+```
 
 Rules:
 

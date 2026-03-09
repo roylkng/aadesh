@@ -7,7 +7,8 @@ This document specifies the production-grade observability contract for Adesh OS
 - how telemetry relates to persisted AuditTrace and Experience Log
 - security-sensitive logging rules (no secret leakage)
 - required metrics (including KRIs) and recommended dashboards
-- event emission requirements for the sync loop, approvals, syscalls, and reflection
+- event emission requirements for the sync loop, approvals, syscalls, ingestion, and reflection
+- event emission requirements for sandboxed execution and claim promotion paths
 
 This is algorithmic logic. Not implementation code.
 
@@ -23,6 +24,7 @@ Every significant action must be correlated to:
 - `audit_trace_id`
 - `syscall_id` (when applicable)
 - `approval_id` / `challenge_id` (when applicable)
+- `job_id` / `artifact_id` (when applicable)
 
 2. **Storage is ground truth**
 Logs and traces are diagnostic. The authoritative record remains:
@@ -103,6 +105,8 @@ Use exact field keys:
 - `syscall_id`
 - `approval_id`
 - `challenge_id`
+- `job_id`
+- `artifact_id`
 - `capability_snapshot_version`
 - `active_state_version`
 - `audience_graph_version`
@@ -158,6 +162,22 @@ Each event log must include:
 - `reflection.job.completed`
 - `reflection.job.failed`
 
+### 3.4 Mandatory log events (ingestion)
+- `ingest.job.created`
+- `ingest.job.started`
+- `ingest.item.processed`
+- `ingest.artifact.added`
+- `ingest.job.completed`
+- `ingest.job.failed`
+
+### 3.5 Mandatory log events (sandbox and claim ledger)
+- `sandbox.session.created`
+- `sandbox.syscall.started`
+- `sandbox.syscall.completed`
+- `claim.candidate.created`
+- `claim.promoted`
+- `claim.conflict.detected`
+
 ### 3.4 Forbidden logging
 Never log:
 - raw `CompiledSlice.evidence.snippets[].text` above a small capped length unless gate <= 1 and sensitivity <= S1
@@ -187,7 +207,12 @@ For loggable payloads:
 ### 4.2 Throughput and latency
 - `requests_total` (counter)
 - `operations_total` (counter, labels: outcome)
+- `ingest_jobs_total` (counter, labels: outcome, source_type)
+- `ingest_artifacts_total` (counter, labels: kind, source_type)
+- `sandboxed_syscalls_total` (counter, labels: outcome, profile)
+- `claim_promotions_total` (counter, labels: claim_type, outcome)
 - `operation_duration_ms` (histogram, labels: gate_max, outcome)
+- `ingest_job_duration_ms` (histogram, labels: outcome)
 - `model_call_duration_ms` (histogram, labels: model_id)
 - `verification_duration_ms` (histogram)
 - `syscall_duration_ms` (histogram, labels: tool, action, outcome)
@@ -296,4 +321,3 @@ This ensures a log line can be verified against immutable records.
 3. No sensitive fields appear in logs under redaction tests.
 4. KRIs counters remain correct under adversarial test suite.
 5. A log line can be traced to an AuditTrace reference for gate/compiled/syscall.
-

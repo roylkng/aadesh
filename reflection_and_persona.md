@@ -26,6 +26,7 @@ This is algorithmic logic. Not implementation code.
 3. **Active State is hypothesis-driven**
 - Extracted traits are stored as hypotheses with evidence pointers and confidence.
 - User-confirmed primitives have special status.
+ - Candidate and accepted claims are governed by `fact_ledger_and_reflection_claims.md`.
 
 4. **No implicit self-modification**
 - Reflection cannot rewrite governance policies or kernel constraints.
@@ -140,6 +141,8 @@ Reflection may use an LLM extractor, but it must output structured candidates:
 If extractor output invalid:
 - mark job failed; do not write anything.
 
+Candidate outputs are written as claim candidates in the Fact Ledger, not as direct Active State mutations.
+
 ### Stage 4: Evidence scoring and tier assignment
 For each candidate primitive, compute:
 - `source_reliability_score` (based on obs_type):
@@ -183,7 +186,7 @@ Constraints:
 - no identity/financial/health/security fields
 
 Action:
-- write to Active State as `candidate` or `active` depending on confidence
+- write candidate claims to the Fact Ledger under low-risk policy, then mint a new state version only for the derived accepted/candidate references
 
 #### Class B: Review required (medium/high risk)
 Examples:
@@ -210,7 +213,7 @@ Action:
 ### Stage 8: Persist updates as new Active State version
 If any changes are accepted (auto or via review queue creation):
 - create a new `active_state_version` referencing parent version
-- write candidate primitives or new review items
+- write claim updates and/or new review items with provenance
 - append Experience Log event `reflection_update`
 - update audit (optional, but recommended for governance transparency)
 
@@ -343,4 +346,3 @@ Keep history of primitive versions for era-aware behavior.
 
 5. Pinned version isolation:
 - reflection produces new active_state_version; in-flight operation pinned version unchanged.
-

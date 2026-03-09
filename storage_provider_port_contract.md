@@ -107,6 +107,16 @@ StorageProvider must persist and fetch:
 ### 2.11 Idempotency keys
 - stored responses for mutation endpoints
 
+### 2.12 Ingestion jobs and normalized artifacts
+- ingest job metadata and counters
+- per-item ingest status for resumability
+- immutable artifact rows keyed by `artifact_id`
+
+### 2.13 Fact Ledger claims
+- immutable claim evidence refs
+- claim records with lifecycle state
+- conflict links and promotion metadata
+
 ---
 
 ## 3) Method-level contract (conceptual interface)
@@ -513,3 +523,101 @@ Failure mode:
 
 5. Audit anchors:
 - gate decision, compiled slice, reasoning output, syscalls, denies all retrievable by trace references.
+
+---
+
+## 19) Ingestion and artifact methods
+
+### 19.1 create_ingest_job
+Inputs:
+- ingest job payload
+- optional idempotency key
+Semantics:
+- persist job record, initial counters, and job-created event linkage
+
+### 19.2 get_ingest_job
+Inputs:
+- job_id
+Returns:
+- job status, counters, bounded errors
+
+### 19.3 update_ingest_job_status
+Inputs:
+- job_id
+- status
+- counters
+- optional terminal error summary
+Semantics:
+- atomic update of status and counters
+
+### 19.4 upsert_ingest_job_item
+Inputs:
+- job_id
+- item_key
+- item status
+- optional error payload
+Semantics:
+- idempotent per `(job_id, item_key)`
+- supports resumable processing and bounded error reporting
+
+### 19.5 put_artifact
+Inputs:
+- artifact_id
+- kind
+- content_ref
+- artifact_meta
+- optional ingest_job_id
+Semantics:
+- immutable insert
+- enforce dedupe constraints when caller provides deterministic dedupe key
+
+### 19.6 get_artifact
+Fetch artifact metadata and refs by `artifact_id`.
+
+### 19.7 list_artifacts_by_job
+List artifacts produced by a given ingest job.
+
+---
+
+## 20) Fact Ledger methods
+
+### 20.1 put_claim
+Inputs:
+- claim record payload
+Semantics:
+- persistent insert or deterministic upsert for identical candidate identity
+
+### 20.2 get_claim
+Fetch claim record by `claim_id`.
+
+### 20.3 query_claims
+Inputs:
+- claim_type optional
+- claim_key optional
+- status set
+- context predicate filter optional
+Returns:
+- matching claims for compiler/reflection/verification use
+
+### 20.4 put_claim_evidence
+Inputs:
+- claim_id
+- evidence reference payload
+Semantics:
+- append immutable evidence refs to claim record
+
+### 20.5 put_claim_conflict
+Inputs:
+- claim_id
+- conflicting_claim_id
+- reason code
+Semantics:
+- persist deterministic conflict linkage without deleting either claim
+
+### 20.6 promote_claim_atomic
+Inputs:
+- claim_id
+- target status
+- promotion metadata
+Semantics:
+- atomic promotion/deprecation transition with experience event and any review linkage

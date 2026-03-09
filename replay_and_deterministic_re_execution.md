@@ -42,7 +42,7 @@ Endpoint:
 Body:
 ```json
 { "mode": "dry_run|full", "override_budgets": { "token_budget": 4096 } }
-````
+```
 
 Replay produces:
 

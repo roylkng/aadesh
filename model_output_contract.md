@@ -144,7 +144,7 @@ No extra top-level keys allowed.
   "risk_posture": "conservative|normal",
   "sensitivity_posture": "minimize|normal"
 }
-````
+```
 
 Rules:
 

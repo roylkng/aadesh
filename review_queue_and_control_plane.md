@@ -116,7 +116,7 @@ Body:
   "idempotency_key": "string",
   "oob": { "challenge_id": "string|null" }
 }
-````
+```
 
 Rules:
 

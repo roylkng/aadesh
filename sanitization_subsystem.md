@@ -82,7 +82,7 @@ Example shape (conceptual):
     }
   }
 }
-````
+```
 
 ### 2.2 Output
 

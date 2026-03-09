@@ -78,12 +78,28 @@ The documentation set is now aligned for implementation. The Phase 0.5 repairs a
 - Batch contracts pin all three required versions.
 - Cross-references to `test_and_kri.md` are repaired.
 
+### Product wedge note
+The current product-scope wedge is defined in `docs/WEDGE_V0_EMAIL_DRAFT_AND_SEND.md`.
+It constrains the first shipped workflow to personal email draft-and-send only and does not expand Milestone 1 to require ingestion jobs, reflection automation, sandboxed execution, or fact-ledger-backed ordinary drafting.
+
+### Wedge-to-milestone map
+- Milestone 1 is wedge-hot: request acceptance, operation creation, auth, idempotency, leases, audit fail-closed behavior.
+- Milestone 2 is wedge-hot: gate/compile/verify loop for email drafting, including denial behavior.
+- Milestone 3 is wedge-hot: diff approval and atomic approval consumption for email send.
+- Milestone 4 is partially wedge-cold: replay `dry_run` is useful, but reflection automation and broader tool execution remain outside the first shipped wedge.
+
 ### Remaining blocking spec gaps
 - None.
 
 ### Alignment notes closed by this pass
 - `storage_schema.md` now includes durable backing for operation leases across both reference backends.
 - `storage_schema.md` now includes `current_versions`, `capability_snapshots`, and `schema_registry_entries`, matching schema-registry and capability snapshot requirements.
+- `artifact_normalization_contract.md` and `ingestion_pipeline_spec.md` are now canonical and wired into API, WS, storage contract, and schema surfaces.
+- `sandboxed_actuator_capability.md` and `fact_ledger_and_reflection_claims.md` are now canonical and must be respected by capability, reflection, compiler, verification, and storage design.
+- `schema_based_tools_and_actions.md` is now canonical and makes action schemas externalized and snapshot-pinned rather than kernel-hardcoded.
+- `email_send_payload_contract.md` is canonical for v0 email diff-edit validation and normalization behavior.
+- `adaptive_interface.md` is canonical for adaptive UI layering; v0 implementation is constrained to Layer 1 and Layer 2 only (runtime personalization + declarative composition), with source-level self-modification explicitly out of scope.
+- `ui_theme.md` is canonical for the control-plane visual system; `Signal District` tokens are the baseline theme direction for the local UI shell.
 - `storage_provider_port_contract.md` now includes read methods for pinned version snapshots and schema registry access, not only mint operations.
 - Reference and summary docs (`reference/provider_interfaces_summary.md`, `reference/contract_summaries.md`, `reference/rust_contract_summaries.md`, `reference/implementation_backlog.md`) now reflect approval-bound OOB and three-version pinning.
 
@@ -97,6 +113,7 @@ The documentation set is now aligned for implementation. The Phase 0.5 repairs a
 - `put_gate_decision`, `get_gate_decision` -> `gate_decisions`
 - `put_compiled_slice`, `get_compiled_slice` -> `compiled_slices`
 - `put_reasoning_output` -> `experience_events` plus `blob_objects` when payloads are externalized
+- `get_reasoning_output` -> `experience_events`
 - `put_syscall_envelope`, `update_syscall_status`, `list_syscalls_by_operation` -> `syscalls`
 - `put_syscall_deny` -> `syscall_denies`
 - `create_approval_item`, `list_pending_approvals`, `get_approval_item`, `consume_approval_atomic` -> `approval_items`, `approval_item_syscalls`, `oob_challenges`, `syscalls`, `operation_transitions`
@@ -107,7 +124,10 @@ The documentation set is now aligned for implementation. The Phase 0.5 repairs a
 - `get_audience_graph_snapshot`, `mint_audience_graph_version` -> `audience_graph_nodes`, `audience_graph_edges`, `audience_graph_scopes`, `current_versions`
 - `get_capability_snapshot`, `mint_capability_snapshot_version` -> `capability_snapshots`, `current_versions`
 - `register_schema_entry`, `get_schema_entry`, `find_schema_entry` -> `schema_registry_entries`
+- `put_claim`, `get_claim`, `query_claims`, `put_claim_evidence`, `put_claim_conflict`, `promote_claim_atomic` -> `claims`, `claim_evidence`, `claim_conflicts`
 - `create_review_item`, `list_review_items`, `decide_review_item_atomic` -> `review_queue_items`, `review_queue_decisions`
+- `create_ingest_job`, `get_ingest_job`, `update_ingest_job_status`, `upsert_ingest_job_item` -> `ingest_jobs`, `ingest_job_items`
+- `put_artifact`, `get_artifact`, `list_artifacts_by_job` -> `artifacts`, `blob_objects`
 - reflection work leasing -> `jobs`
 - externalized payload metadata -> `blob_objects`
 
@@ -136,6 +156,21 @@ The documentation set is now aligned for implementation. The Phase 0.5 repairs a
   - `capability_snapshots(created_at)`, `capability_snapshots(parent_version)`
   - `schema_registry_entries(name, semver)` unique
   - `schema_registry_entries(content_hash)`
+
+#### Ingestion and artifact normalization
+- Tables: `ingest_jobs`, `ingest_job_items`, `artifacts`, `blob_objects`, `experience_events`
+- Required indices:
+  - `ingest_jobs(status, created_at)`
+  - `ingest_job_items(job_id, status)`
+  - `artifacts(dedupe_key)` unique
+  - `artifacts(ingest_job_id, created_at)`
+
+#### Fact Ledger claims
+- Tables: `claims`, `claim_evidence`, `claim_conflicts`
+- Required indices:
+  - `claims(claim_key, status)`
+  - `claims(claim_type, status)`
+  - primary-key uniqueness on claim evidence and conflict links
 
 #### Replay anchors and audit
 - Tables: `audit_traces`, `gate_decisions`, `compiled_slices`, `syscalls`, `syscall_denies`, `ipc_artifacts`, `approval_items`, `oob_challenges`, `experience_events`
@@ -278,3 +313,5 @@ Acceptance criteria:
 
 ## Implementation readiness
 The spec set is now in a state where implementation can begin deterministically after this documentation PR is reviewed and merged. The first code PR should target Milestone 1 only.
+The ingestion and artifact-normalization specs are canonical but remain outside the Milestone 1 code slice.
+The sandboxed-actuator and fact-ledger specs are also canonical but remain outside the Milestone 1 code slice.

@@ -52,8 +52,16 @@ Non-negotiable:
 11. `scheduler_concurrency.md`
 12. `model_output_contract.md`
 13. `model_provider_port_contract.md`
-14. `control_plane_api_spec.md`
-15. `docs/IMPLEMENTATION_PLAN.md`
+14. `artifact_normalization_contract.md`
+15. `schema_based_tools_and_actions.md`
+16. `ingestion_pipeline_spec.md`
+17. `fact_ledger_and_reflection_claims.md`
+18. `sandboxed_actuator_capability.md`
+19. `adaptive_interface.md`
+20. `ui_theme.md`
+21. `control_plane_api_spec.md`
+22. `email_send_payload_contract.md`
+23. `docs/IMPLEMENTATION_PLAN.md`
 
 For the full ordered map and precedence rules, use `index.md`.
 
@@ -71,8 +79,16 @@ Key entry points:
 - `storage_semantics_txn.md`
 - `approval_oob_spec.md`
 - `operation_decomposition_ipc.md`
+- `artifact_normalization_contract.md`
+- `schema_based_tools_and_actions.md`
+- `ingestion_pipeline_spec.md`
+- `fact_ledger_and_reflection_claims.md`
+- `sandboxed_actuator_capability.md`
+- `adaptive_interface.md`
+- `ui_theme.md`
 - `scheduler_concurrency.md`
 - `control_plane_api_spec.md`
+- `email_send_payload_contract.md`
 - `schema_registry_and_versioning.md`
 - `data_classification_and_taint_labelling.md`
 - `sanitization_subsystem.md`
@@ -87,6 +103,7 @@ Key entry points:
 
 ### Implementation plan
 - `docs/IMPLEMENTATION_PLAN.md`
+- `docs/REPO_ORGANIZATION.md`
 
 This plan is the implementation baseline. It is not a substitute for canonical specs.
 
@@ -149,3 +166,4 @@ Specs before behavior:
 
 * If behavior is missing or ambiguous, update the spec first.
 * Implementations must follow canonical specs and port contracts.
+* Keep file placement aligned with `docs/REPO_ORGANIZATION.md`.

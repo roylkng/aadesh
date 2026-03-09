@@ -7,6 +7,7 @@ This document specifies the deterministic logic of the **Verification Core**. It
 - how to detect and prevent **Taint Laundering**
 - how to generate actionable failures and **Anti-Retry Trap** denial payloads
 - how to integrate with approvals (confirm/diff/OOB) without ambiguity
+- how high-stakes factual assertions must be evidenced via the Fact Ledger
 
 This is algorithmic logic. Not implementation code.
 
@@ -68,6 +69,9 @@ Verification output must be persisted in Experience Log and referenced from Audi
   - permitted now
   - awaiting approval (confirm/diff/oob_required)
   - denied
+
+5. **High-stakes facts require evidence**
+- If a draft output or proposed syscall justification asserts a high-stakes fact, verification must be able to cite accepted-claim evidence or downgrade/refuse the assertion per `fact_ledger_and_reflection_claims.md`.
 
 ---
 
@@ -218,6 +222,10 @@ If schema invalid:
 - deny with `deny_class=verification_failed`
 - include `triggering_fields` and missing required fields
 - retry_policy allowed only if missing fields can be supplied safely
+
+If capability `execution_class=sandboxed` and the sandbox profile allows network access or persistent mounts:
+- require at least `diff` approval at R3
+- if a deterministic diff cannot be produced, deny and require a manual path
 
 ### 6.3 Forbidden fields check (negative memory)
 If args include forbidden fields (SSN, passwords, tokens, etc.) or require them:

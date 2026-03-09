@@ -9,6 +9,8 @@ This document specifies how Adesh OS stores, versions, validates, and references
 - Schema hashing, integrity checks, and upgrade policy
 - How `schema_ref` is resolved deterministically across backends
 
+The generic execution model that consumes these schemas is defined in `schema_based_tools_and_actions.md`.
+
 This is algorithmic logic. Not implementation code.
 
 ---
@@ -35,6 +37,7 @@ Same input and same schema must yield the same validation result.
 Defines:
 - tool name
 - actions and their arg JSON schema
+- action-level `args_schema_ref` / `result_schema_ref`
 - required/optional fields
 - editable fields for diff mode
 - risk floor overrides (optional)
@@ -110,7 +113,7 @@ Canonical tool schema format:
     }
   ]
 }
-````
+```
 
 Rules:
 
@@ -120,10 +123,12 @@ Rules:
 
 ### 4.2 Action schema_ref
 
-Each `(tool, action)` must have a schema_ref:
+Each `(tool, action)` must have an action-level schema binding:
 
+* `args_schema_ref` required
+* `result_schema_ref` optional but recommended
 * stored in capability snapshot descriptors
-* used by verification for validation
+* used by verification and tool-result validation
 
 ---
 

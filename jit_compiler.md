@@ -28,8 +28,9 @@ For a single operation:
   - policy primitives (negative memory, boundaries)
   - identity primitives (commitments, stable preferences)
   - operational profile primitives (format preferences)
-  - hypothesis ledger (probabilistic traits/preferences)
+  - references to accepted claims from the Fact Ledger
   - provenance pointers to Experience Log refs
+- accepted claim records from `fact_ledger_and_reflection_claims.md`
 - Audience Graph snapshot at `audience_graph_version`
 - Capability snapshot at `capability_snapshot_version`
 - Operation context sources:
@@ -166,7 +167,7 @@ If predicate evaluation is uncertain:
 ### 4.3 Conflict set construction
 Applicable primitives may contradict.
 Build conflict sets by:
-- explicit contradiction links from hypothesis ledger
+- explicit contradiction links from the Fact Ledger
 - or same attribute key with mutually exclusive values
 
 Conflict sets are resolved by the deterministic algorithm in Section 7.

@@ -85,99 +85,127 @@ Adesh OS runs a strict execution pipeline:
 9. `capability_mcp.md`  
    Capability self-model, snapshot pinning, MCP discovery, enable/disable gating.
 
-10. `mcp_host_surface_contract_spec.md`  
+10. `sandboxed_actuator_capability.md`
+   Sandboxed actuator capability class, sandbox policy descriptors, containment, and replay anchors.
+
+11. `mcp_host_surface_contract_spec.md`  
    MCP Host tool surface for external agents, audience-scoped outputs, default deny.
 
-11. `websocket_events_contract.md`  
+12. `websocket_events_contract.md`  
    WS event envelope, streaming chunks, ordering expectations, persistence vs ephemeral.
 
-12. `control_plane_api_spec.md`  
+13. `control_plane_api_spec.md`  
    Root Owner HTTP control plane API (REST + WS integration).
+
+14. `adaptive_interface.md`
+   Adaptive interface layers, persona policy model, and safe UI evolution boundaries.
+
+15. `ui_theme.md`
+   Signal District design token system and visual interaction rules for the control plane UI.
+
+16. `email_send_payload_contract.md`
+   Canonical email send payload shape, normalization, and diff-edit rules for the v0 wedge.
 
 ---
 
 ### D) Security, privacy, classification, and governance extensions
-13. `audience_graph_and_disclosure_policy.md`  
+17. `audience_graph_and_disclosure_policy.md`  
    Audience graph model, scopes, ceilings, outbound audience resolution, default deny.
 
-14. `data_classification_and_taint_labelling.md`  
+18. `data_classification_and_taint_labelling.md`  
    Sensitivity and taint labeling, propagation, laundering prevention.
 
-15. `sanitization_subsystem.md`  
+19. `sanitization_subsystem.md`  
    Sanitized_view artifacts, sanitization reports, certified sanitizers, verification rules.
 
-16. `error_remediation.md`  
+20. `error_remediation.md`  
    Error taxonomy, constraint ids, remediation payloads, bounded retry rules.
 
-17. `schema_registry_and_versioning.md`  
+21. `schema_registry_and_versioning.md`  
    Schema storage, hashing, pinning via capability snapshots, upgrade rules.
+
+22. `schema_based_tools_and_actions.md`
+   Generic schema-defined tool/action model, action-level args/result schemas, canonicalization, and idempotent syscall behavior.
+
+23. `artifact_normalization_contract.md`
+   Canonical artifact shapes produced by ingestion and downstream deterministic normalization.
+
+24. `fact_ledger_and_reflection_claims.md`
+   Durable claim ledger, evidence-backed promotion, conflict handling, and compiler/verification consumption rules.
 
 ---
 
 ### E) Evolution and long-term operability
-18. `reflection_and_persona.md`  
+25. `ingestion_pipeline_spec.md`
+   Asynchronous ingest jobs, deterministic normalization flow, artifact persistence, and reflection handoff.
+
+26. `reflection_and_persona.md`  
    Async enrichment, hypothesis lifecycle, opportunity-aware decay, write-gates.
 
-19. `review_queue_and_control_plane.md`  
+27. `review_queue_and_control_plane.md`  
    Review items, diffs, approve/reject/edit, OOB for R4 state changes, UI workflows.
 
-20. `replay_and_deterministic_re_execution.md`  
+28. `replay_and_deterministic_re_execution.md`  
    Replay modes (dry_run/full), deterministic anchors, divergence reporting.
 
-21. `version_diff_and_merge.md`  
+29. `version_diff_and_merge.md`  
    Canonical diffs, safe merges, conflict surfacing across versions.
 
-22. `retention_and_data_lifecycle.md`  
+30. `retention_and_data_lifecycle.md`  
    Retention, compaction, deletion (R4), tombstones, safe GC rules.
 
 ---
 
 ### F) Platform ops, telemetry, and security validation
-23. `observability_audit.md`  
+31. `observability_audit.md`  
    Logs, traces, metrics, KRIs, redaction rules, audit correlation.
 
-24. `test_and_kri.md`  
+32. `test_and_kri.md`  
    Red-team suite, pass/fail criteria, KRI thresholds.
 
-25. `threat_model_spec.md`  
+33. `threat_model_spec.md`  
    Threat model: assets, boundaries, adversaries, mitigations, residual risk.
 
-26. `boot_sequence.md`  
+34. `boot_sequence.md`  
    Config precedence, profiles, deterministic boot order, degradation behavior, hot reload rules.
 
 ---
 
 ### G) Contracts and port boundaries
-27. `api_batch_1.md`  
-28. `api_batch_2.md`  
-29. `api_batch_3.md`  
+35. `api_batch_1.md`  
+36. `api_batch_2.md`  
+37. `api_batch_3.md`  
    Batch contracts: Boot & Route, Compilation & Governance, Execution & Audit.
 
-30. `storage_provider_port_contract.md`  
+38. `storage_provider_port_contract.md`  
    StorageProvider method-level contract, atomic operations, leases, idempotency.
 
-31. `blobstore_provider_port_contract.md`  
+39. `blobstore_provider_port_contract.md`  
    BlobStore contract: content refs, integrity, metadata, retention safety.
 
-32. `jobqueue_provider_port_contract.md`  
+40. `jobqueue_provider_port_contract.md`  
    JobQueue contract: enqueue/lease/ack/fail, backoff, dedupe.
 
-33. `tool_provider_port_contract.md`  
+41. `tool_provider_port_contract.md`  
    ToolProvider syscall execution contract, idempotency, structured results.
 
-34. `model_provider_port_contract.md`  
+42. `model_provider_port_contract.md`  
    ModelProvider contract: generation, streaming, retries, validation.
 
-35. `model_output_contract.md`  
+43. `model_output_contract.md`  
    ReasoningOutput schema and LLM translation boundary (canonical LLM I/O).
 
 ---
 
-## 4) Supporting and meta docs (reference)
+## 4) Supporting and meta docs
 - `stack.md`  
   Tech stack strategy and swapability principles.
 - `storage_schema.md`  
   Storage schema notes (DDL-level).
+- `docs/REPO_ORGANIZATION.md`  
+  Repository layout, placement, and contribution hygiene contract.
+- `registry/README.md`  
+  Bootstrap artifact layout for schema and capability snapshot initialization.
 - `reference/provider_interfaces_summary.md`  
   Consolidated interface overview (if kept in sync with port contracts).
 - `archive/api_spec_legacy.md`  
