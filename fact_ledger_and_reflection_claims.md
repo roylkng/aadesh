@@ -63,6 +63,9 @@ Minimum v0.1 types:
 Each claim must declare:
 - `claim_type` (string)
 - `claim_key` (string namespace)
+- `scope_type` (`user_global|workspace|task_or_workstream|artifact|episode`)
+- `scope_key` (stable scope identity string)
+- `subject_key` (normalized subject within scope for alignment/dedup)
 - `claim_value` (JSON)
 - `context_predicates` (JSON)
 - `time_bounds` (optional)
@@ -77,6 +80,9 @@ A claim record must include:
 - `claim_id` (stable)
 - `claim_type`
 - `claim_key`
+- `scope_type`
+- `scope_key`
+- `subject_key`
 
 ### Content
 - `value_json`
@@ -94,7 +100,7 @@ A claim record must include:
   - user_confirmed flag
 
 ### Lifecycle and status
-- `status`: `candidate|accepted|deprecated|rejected`
+- `status`: `candidate|accepted|superseded|rejected`
 - `created_at`
 - `updated_at`
 - `created_by`: `reflection|owner`
@@ -134,6 +140,16 @@ Promotion to `accepted` requires:
 - For `fact` claims: conservative promotion policy; require high evidence quality.
 - For `preference` claims: may auto-promote if low-risk and repeatedly observed.
 
+### 5.1.1 v0 repeated-observation thresholds
+
+For the first cognitive-sidecar proof, "repeatedly observed" means:
+
+- workspace-scoped preference: at least 2 aligned signals across 2 separate episodes in the same `scope_key`
+- user-global preference: at least 3 aligned signals across at least 2 distinct workspace scope keys
+- inferred risk: at least 2 aligned signals in the same scope, or 1 aligned signal plus 1 deterministic artifact/doc/incident reference
+
+Model-only inference is never enough to promote a claim to accepted status in v0.
+
 ### 5.2 Promotion gate table
 
 Minimum deterministic policy:
@@ -170,7 +186,7 @@ If two accepted claims conflict at runtime, the compiler resolves using:
 (This matches your v1.5 tie-breaker logic.)
 
 ### 5.5 Deprecation, not deletion
-Claims are deprecated, not deleted, except under explicit R4 deletion with tombstones (see retention spec).
+Claims are superseded, not deleted, except under explicit R4 deletion with tombstones (see retention spec).
 
 ---
 
@@ -207,6 +223,7 @@ You may implement the ledger as:
 - `claim_conflicts` (optional)
 Or as JSON in a single table, but must support:
 - lookup by claim_key + predicates
+- lookup by `(scope_type, scope_key, subject_key, status)`
 - status filtering
 - conflict detection
 

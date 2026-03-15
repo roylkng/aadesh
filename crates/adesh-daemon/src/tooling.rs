@@ -609,7 +609,8 @@ mod tests {
             capability_snapshot_version: "cap:bootstrap".to_string(),
             model_provider_backend: "fake".to_string(),
             model_provider_base_url: "http://127.0.0.1:1234".to_string(),
-            model_provider_model: "qwen/qwen3.5-35b-a3b".to_string(),
+            model_provider_model: "qwen3.5-27b".to_string(),
+            model_provider_timeout_seconds: 45,
             email_provider_backend: "smtp".to_string(),
             email_from_address: "sender@example.com".to_string(),
             email_smtp_host: "127.0.0.1".to_string(),
@@ -617,6 +618,9 @@ mod tests {
             email_smtp_username: None,
             email_smtp_password: None,
             webhook_provider_backend: "fake".to_string(),
+            rate_limit_window_seconds: 30,
+            rate_limit_max_requests: 120,
+            syscall_retry_attempts: 2,
         }
     }
 

@@ -19,7 +19,8 @@ fn test_config() -> AppConfig {
         capability_snapshot_version: "cap:bootstrap".to_string(),
         model_provider_backend: "fake".to_string(),
         model_provider_base_url: "http://127.0.0.1:1234".to_string(),
-        model_provider_model: "qwen/qwen3.5-35b-a3b".to_string(),
+        model_provider_model: "qwen3.5-27b".to_string(),
+        model_provider_timeout_seconds: 45,
         email_provider_backend: "fake".to_string(),
         email_from_address: "adesh@example.invalid".to_string(),
         email_smtp_host: "127.0.0.1".to_string(),
@@ -27,6 +28,9 @@ fn test_config() -> AppConfig {
         email_smtp_username: None,
         email_smtp_password: None,
         webhook_provider_backend: "fake".to_string(),
+        rate_limit_window_seconds: 30,
+        rate_limit_max_requests: 120,
+        syscall_retry_attempts: 2,
     }
 }
 
@@ -55,7 +59,7 @@ async fn health_endpoint_is_public() {
     assert_eq!(body["data"]["storage"], "ok");
     assert_eq!(body["data"]["model_provider"], "ok");
     assert_eq!(body["data"]["tool_provider"], "ok");
-    assert_eq!(body["data"]["queue"], "degraded");
+    assert_eq!(body["data"]["queue"], "ok");
 }
 
 #[tokio::test]
@@ -82,7 +86,7 @@ async fn root_ui_shell_is_public() {
             .to_vec(),
     )
     .unwrap();
-    assert!(body.contains("Adesh OS Email Wedge"));
+    assert!(body.contains("Adesh OS Control Plane Demo"));
 }
 
 #[tokio::test]

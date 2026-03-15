@@ -1,6 +1,11 @@
-# Wedge v0 Brief: Personal Draft and Send (Email Only)
+# Deferred Wedge Brief: Personal Draft and Send (Email Only)
 
-Status: Product-scope wedge brief. This document constrains implementation scope. It is not a canonical kernel behavior spec. Canonical system behavior is defined by root-level specs.
+Status: deferred legacy wedge brief. Retained for reference only. This is not the active product proof.
+
+Note:
+- the active proof is now `docs/WEDGE_V0_CODING_COGNITIVE_CONTINUITY.md`
+- this email wedge is no longer the implementation driver
+- keep this document only as a retained record of the earlier execution-oriented slice
 
 ## 1) Target user
 - Single Root Owner, day-to-day personal use.
@@ -66,6 +71,8 @@ These are explicitly out of wedge.
 - No reflection automation that silently alters behavior.
 - No automatic claim promotion beyond explicitly confirmed trivial formatting preferences.
 - No audience graph editing UI.
+- No `WorkflowSpec` runtime orchestration layer.
+- No `InterfaceSpec`/`InterfaceInstance` composition runtime beyond the current fixed local UI shell.
 
 ## 6) Audience model for v0
 v0 has only one audience: Root Owner.

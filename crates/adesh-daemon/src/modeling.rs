@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{error::Error as StdError, sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use reqwest::Client;
@@ -23,6 +23,17 @@ impl ModelProvider for FakeModelProvider {
         input: ModelGenerateInput,
     ) -> Result<ModelGenerateOutput, StorageError> {
         let content = input.request_content.trim();
+        let attachment_preview = if input.attachment_context.is_empty() {
+            "none".to_string()
+        } else {
+            input
+                .attachment_context
+                .iter()
+                .take(3)
+                .map(|entry| entry.replace('\n', " "))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        };
         let subject = if content.to_lowercase().contains("follow-up") {
             "Follow-up"
         } else if content.to_lowercase().contains("reply") {
@@ -54,7 +65,10 @@ impl ModelProvider for FakeModelProvider {
                     "channel": "draft",
                     "format": "plain_text",
                     "title": subject,
-                    "content": format!("Subject: {subject}\n\n{}\n\nContext artifacts: {}", content, input.attachment_count)
+                    "content": format!(
+                        "Subject: {subject}\n\n{}\n\nContext artifacts: {}\nContext preview: {}",
+                        content, input.attachment_count, attachment_preview
+                    )
                 }
             ],
             "proposed_syscalls": [],
@@ -82,9 +96,16 @@ pub struct LmStudioModelProvider {
 }
 
 impl LmStudioModelProvider {
-    pub fn new(base_url: String, model: String) -> Result<Self, StorageError> {
+    pub fn new(
+        base_url: String,
+        model: String,
+        timeout_seconds: u64,
+    ) -> Result<Self, StorageError> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(45))
+            .no_proxy()
+            .http1_only()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(timeout_seconds))
             .build()
             .map_err(|err| StorageError::Unavailable(format!("model client init failed: {err}")))?;
 
@@ -96,6 +117,34 @@ impl LmStudioModelProvider {
     }
 }
 
+fn describe_reqwest_error(err: &reqwest::Error) -> String {
+    let mut message = format!("{err}");
+    if err.is_connect() {
+        message.push_str(" [connect]");
+    }
+    if err.is_timeout() {
+        message.push_str(" [timeout]");
+    }
+    if err.is_request() {
+        message.push_str(" [request]");
+    }
+    if err.is_body() {
+        message.push_str(" [body]");
+    }
+    if err.is_decode() {
+        message.push_str(" [decode]");
+    }
+
+    let mut source = err.source();
+    let mut depth = 0usize;
+    while let Some(cause) = source {
+        depth += 1;
+        message.push_str(&format!(" | cause[{depth}]: {cause}"));
+        source = cause.source();
+    }
+    message
+}
+
 #[async_trait]
 impl ModelProvider for LmStudioModelProvider {
     async fn health(&self) -> Result<(), StorageError> {
@@ -105,7 +154,10 @@ impl ModelProvider for LmStudioModelProvider {
             .send()
             .await
             .map_err(|err| {
-                StorageError::Unavailable(format!("model health probe failed: {err}"))
+                StorageError::Unavailable(format!(
+                    "model health probe failed: {}",
+                    describe_reqwest_error(&err)
+                ))
             })?;
 
         if !response.status().is_success() {
@@ -159,7 +211,12 @@ impl ModelProvider for LmStudioModelProvider {
             .json(&payload)
             .send()
             .await
-            .map_err(|err| StorageError::Unavailable(format!("model request failed: {err}")))?;
+            .map_err(|err| {
+                StorageError::Unavailable(format!(
+                    "model request failed: {}",
+                    describe_reqwest_error(&err)
+                ))
+            })?;
 
         let status = response.status();
         let provider_body: Value = response.json().await.map_err(|err| {
@@ -193,6 +250,7 @@ pub fn build_model_provider(config: &AppConfig) -> Result<Arc<dyn ModelProvider>
         "lm_studio" => LmStudioModelProvider::new(
             config.model_provider_base_url.clone(),
             config.model_provider_model.clone(),
+            config.model_provider_timeout_seconds,
         )
         .map(|provider| Arc::new(provider) as Arc<dyn ModelProvider>),
         "fake" => Ok(Arc::new(FakeModelProvider)),
@@ -233,11 +291,17 @@ fn build_lm_studio_prompt(input: &ModelGenerateInput) -> String {
             "}}\n",
             "Use the exact operation_id shown above.\n",
             "Request content: {request_content}\n",
-            "Attachment count: {attachment_count}\n"
+            "Attachment count: {attachment_count}\n",
+            "Attachment context:\n{attachment_context}\n"
         ),
         operation_id = input.operation_id,
         request_content = input.request_content,
         attachment_count = input.attachment_count,
+        attachment_context = if input.attachment_context.is_empty() {
+            "(none)".to_string()
+        } else {
+            input.attachment_context.join("\n---\n")
+        },
     )
 }
 
@@ -359,6 +423,7 @@ mod tests {
             audit_trace_id: "audit-1".to_string(),
             request_content: "draft an email".to_string(),
             attachment_count: 0,
+            attachment_context: Vec::new(),
         }
     }
 
@@ -401,7 +466,7 @@ mod tests {
             get(|| async {
                 Json(json!({
                     "data": [
-                        {"id": "qwen/qwen3.5-35b-a3b"},
+                        {"id": "qwen3.5-27b"},
                         {"id": "other-model"}
                     ]
                 }))
@@ -413,11 +478,9 @@ mod tests {
             axum::serve(listener, app).await.unwrap();
         });
 
-        let provider = LmStudioModelProvider::new(
-            format!("http://{addr}"),
-            "qwen/qwen3.5-35b-a3b".to_string(),
-        )
-        .unwrap();
+        let provider =
+            LmStudioModelProvider::new(format!("http://{addr}"), "qwen3.5-27b".to_string(), 180)
+                .unwrap();
 
         provider.health().await.unwrap();
         handle.abort();

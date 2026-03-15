@@ -10,6 +10,7 @@ pub struct AppConfig {
     pub model_provider_backend: String,
     pub model_provider_base_url: String,
     pub model_provider_model: String,
+    pub model_provider_timeout_seconds: u64,
     pub email_provider_backend: String,
     pub email_from_address: String,
     pub email_smtp_host: String,
@@ -17,6 +18,9 @@ pub struct AppConfig {
     pub email_smtp_username: Option<String>,
     pub email_smtp_password: Option<String>,
     pub webhook_provider_backend: String,
+    pub rate_limit_window_seconds: u64,
+    pub rate_limit_max_requests: u32,
+    pub syscall_retry_attempts: u32,
 }
 
 impl AppConfig {
@@ -36,8 +40,12 @@ impl AppConfig {
             env::var("ADESH_MODEL_PROVIDER_BACKEND").unwrap_or_else(|_| "fake".to_string());
         let model_provider_base_url = env::var("ADESH_MODEL_PROVIDER_BASE_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:1234".to_string());
-        let model_provider_model = env::var("ADESH_MODEL_PROVIDER_MODEL")
-            .unwrap_or_else(|_| "qwen/qwen3.5-35b-a3b".to_string());
+        let model_provider_model =
+            env::var("ADESH_MODEL_PROVIDER_MODEL").unwrap_or_else(|_| "qwen3.5-27b".to_string());
+        let model_provider_timeout_seconds = env::var("ADESH_MODEL_PROVIDER_TIMEOUT_SECONDS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(180);
         let email_provider_backend =
             env::var("ADESH_EMAIL_PROVIDER_BACKEND").unwrap_or_else(|_| "fake".to_string());
         let email_from_address = env::var("ADESH_EMAIL_FROM_ADDRESS")
@@ -56,6 +64,18 @@ impl AppConfig {
             .filter(|value| !value.trim().is_empty());
         let webhook_provider_backend =
             env::var("ADESH_WEBHOOK_PROVIDER_BACKEND").unwrap_or_else(|_| "fake".to_string());
+        let rate_limit_window_seconds = env::var("ADESH_RATE_LIMIT_WINDOW_SECONDS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(30);
+        let rate_limit_max_requests = env::var("ADESH_RATE_LIMIT_MAX_REQUESTS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(120);
+        let syscall_retry_attempts = env::var("ADESH_SYSCALL_RETRY_ATTEMPTS")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(2);
 
         Ok(Self {
             bind_addr,
@@ -66,6 +86,7 @@ impl AppConfig {
             model_provider_backend,
             model_provider_base_url,
             model_provider_model,
+            model_provider_timeout_seconds,
             email_provider_backend,
             email_from_address,
             email_smtp_host,
@@ -73,6 +94,9 @@ impl AppConfig {
             email_smtp_username,
             email_smtp_password,
             webhook_provider_backend,
+            rate_limit_window_seconds,
+            rate_limit_max_requests,
+            syscall_retry_attempts,
         })
     }
 }

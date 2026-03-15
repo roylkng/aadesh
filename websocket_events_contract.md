@@ -7,6 +7,7 @@ This document specifies the **WebSocket event contract** for the Root Owner cont
 - idempotency and dedupe rules
 - streaming behavior for reasoning output (`reasoning_stream_chunk`)
 - required events for approvals, syscalls, audits, and capabilities
+- required events for workflow/interface composition lifecycles (post-wedge)
 - persistence rules: what must be stored vs what may be ephemeral
 
 This is algorithmic logic. Not implementation code.
@@ -29,6 +30,9 @@ This is algorithmic logic. Not implementation code.
   - `type`
   - `request_id` (when available)
   - `operation_id` (when relevant)
+  - `workflow_instance_id` (when relevant)
+  - `step_id` (when relevant)
+  - `interface_instance_id` (when relevant)
   - `isolation_id` (when relevant)
   - `audit_trace_id` (when relevant)
 
@@ -67,6 +71,9 @@ All events must conform to:
   "type": "string",
   "request_id": "string|null",
   "operation_id": "string|null",
+  "workflow_instance_id": "string|null",
+  "step_id": "string|null",
+  "interface_instance_id": "string|null",
   "isolation_id": "string|null",
   "audit_trace_id": "string|null",
   "data": {}
@@ -105,6 +112,8 @@ On reconnect:
   * `/v1/approvals/pending`
   * `/v1/operations/{id}` for active operations
   * `/v1/audit/{audit_trace_id}` for latest traces
+  * `/v1/workflow-instances/{workflow_instance_id}` when workflow composition is enabled
+  * `/v1/interface-instances/{interface_instance_id}` when interface composition is enabled
 * WS stream is treated as incremental updates.
 
 ---
@@ -330,13 +339,84 @@ Data:
 { "job_id": "string", "artifact_id": "string", "kind": "string", "content_ref": "string" }
 ```
 
-### 4.20 ingest_job_completed / ingest_job_failed
+### 4.20 ingest_job_completed / ingest_job_failed / ingest_job_cancelled
 
 Emitted when the ingest job reaches a terminal state.
 Data:
 
 ```json
 { "job_id": "string", "status": "completed|failed|cancelled", "error_summary": "string|null" }
+```
+
+Rules:
+- `ingest_job_completed` must carry `status = "completed"`
+- `ingest_job_failed` must carry `status = "failed"`
+- `ingest_job_cancelled` must carry `status = "cancelled"`
+
+### 4.21 workflow_instance_state (post-wedge)
+
+Emitted on workflow instance transitions.
+Data:
+
+```json
+{
+  "workflow_instance_id": "string",
+  "state": "created|running|awaiting_approval|blocked|completed|failed|cancelled",
+  "reason": "string|null"
+}
+```
+
+Rules:
+
+* Must be emitted only after workflow instance state is persisted.
+
+### 4.22 workflow_step_state (post-wedge)
+
+Emitted on workflow step transitions.
+Data:
+
+```json
+{
+  "workflow_instance_id": "string",
+  "step_id": "string",
+  "step_type": "transform|model_call|syscall|subworkflow",
+  "state": "pending|running|awaiting_approval|blocked|completed|failed|skipped|cancelled",
+  "linked_operation_id": "string|null",
+  "linked_approval_id": "string|null",
+  "linked_syscall_id": "string|null"
+}
+```
+
+Rules:
+
+* Must be emitted only after step state and step transition records are persisted.
+
+### 4.23 interface_instance_ready / interface_instance_stale (post-wedge)
+
+Emitted when an interface instance is compiled or marked stale.
+Data:
+
+```json
+{
+  "interface_instance_id": "string",
+  "interface_ref": "string",
+  "operation_id": "string|null",
+  "workflow_instance_id": "string|null",
+  "state": "ready|stale"
+}
+```
+
+### 4.24 replay_reconstruction_update (post-wedge)
+
+Emitted when replay persists workflow/interface reconstruction reports.
+Data:
+
+```json
+{
+  "replay_id": "string",
+  "reconstruction_kind": "workflow|interface",
+  "report_ref": "string"
+}
 ```
 
 ---
@@ -354,6 +434,8 @@ Data:
 * IPC artifacts
 * artifact metadata rows
 * ingest job status transitions
+* workflow instance state and step transitions
+* interface instance payloads and state transitions
 * final reasoning output artifact (event_ref or content_ref)
 * AuditTrace timeline entries
 
@@ -375,7 +457,7 @@ Data:
    * refreshing details when `audit_update` arrives
 4. UI must support reconnect:
 
-   * on reconnect, fetch pending approvals and active operations.
+   * on reconnect, fetch pending approvals, active operations, and any active workflow/interface instances.
 
 ---
 
@@ -404,3 +486,11 @@ Data:
 6. ingest_job_completed emitted:
 
 * `/v1/ingest/jobs/{job_id}` returns the same terminal status and counters.
+
+7. workflow_step_state emitted (post-wedge):
+
+* `/v1/workflow-instances/{workflow_instance_id}` returns matching persisted step state.
+
+8. interface_instance_ready emitted (post-wedge):
+
+* `/v1/interface-instances/{interface_instance_id}` returns persisted blocks and bindings.

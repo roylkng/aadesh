@@ -21,14 +21,16 @@
 9. `active_state_versions` + `current_versions`
 10. `capability_snapshots`
 11. `schema_registry_entries`
-12. `audience_graph_nodes`, `audience_graph_edges`, `audience_graph_scopes`
-13. `review_queue_items` + `review_queue_decisions`
-14. `idempotency_keys`
-15. `claims` + `claim_evidence` + `claim_conflicts`
-16. `ingest_jobs` + `ingest_job_items`
-17. `artifacts`
-18. `jobs` (reflection / async work queue)
-19. `blob_objects` (metadata only, content in filesystem/S3)
+12. `workflow_specs` + `workflow_instances` + `workflow_instance_transitions` + `workflow_step_states` + `workflow_step_transitions`
+13. `interface_specs` + `interface_instances`
+14. `audience_graph_nodes`, `audience_graph_edges`, `audience_graph_scopes`
+15. `review_queue_items` + `review_queue_decisions`
+16. `idempotency_keys`
+17. `claims` + `claim_evidence` + `claim_conflicts`
+18. `ingest_jobs` + `ingest_job_items`
+19. `artifacts`
+20. `jobs` (reflection / async work queue)
+21. `blob_objects` (metadata only, content in filesystem/S3)
 
 Minimal indexes are included below.
 
@@ -386,7 +388,142 @@ CREATE INDEX IF NOT EXISTS idx_schema_registry_hash
   ON schema_registry_entries(content_hash);
 
 -- =========================
--- 12) Audience Graph
+-- 12) Workflow specs and instances
+-- =========================
+CREATE TABLE IF NOT EXISTS workflow_specs (
+  workflow_ref TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  author TEXT NOT NULL,
+  tags_json TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_specs_name_created
+  ON workflow_specs(name, created_at);
+
+CREATE TABLE IF NOT EXISTS workflow_instances (
+  workflow_instance_id TEXT PRIMARY KEY,
+  workflow_ref TEXT NOT NULL,
+  parent_request_id TEXT,
+  parent_operation_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  state TEXT NOT NULL,                -- created|running|awaiting_approval|blocked|completed|failed|cancelled
+  state_reason TEXT,
+  pinned_active_state_version TEXT NOT NULL,
+  pinned_capability_snapshot_version TEXT NOT NULL,
+  pinned_audience_graph_version TEXT NOT NULL,
+  inputs_json TEXT NOT NULL,
+  outputs_json TEXT,
+  FOREIGN KEY(workflow_ref) REFERENCES workflow_specs(workflow_ref),
+  FOREIGN KEY(parent_operation_id) REFERENCES operations(operation_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_instances_ref_state
+  ON workflow_instances(workflow_ref, state);
+
+CREATE TABLE IF NOT EXISTS workflow_instance_transitions (
+  transition_id TEXT PRIMARY KEY,
+  workflow_instance_id TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  from_state TEXT,
+  to_state TEXT NOT NULL,
+  reason TEXT,
+  FOREIGN KEY(workflow_instance_id) REFERENCES workflow_instances(workflow_instance_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_instance_transitions_instance_ts
+  ON workflow_instance_transitions(workflow_instance_id, ts);
+
+CREATE TABLE IF NOT EXISTS workflow_step_states (
+  workflow_instance_id TEXT NOT NULL,
+  step_id TEXT NOT NULL,
+  step_type TEXT NOT NULL,            -- transform|model_call|syscall|subworkflow
+  state TEXT NOT NULL,                -- pending|running|awaiting_approval|blocked|completed|failed|skipped|cancelled
+  attempt INTEGER NOT NULL DEFAULT 0,
+  operation_id TEXT,
+  approval_id TEXT,
+  syscall_id TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(workflow_instance_id, step_id),
+  FOREIGN KEY(workflow_instance_id) REFERENCES workflow_instances(workflow_instance_id),
+  FOREIGN KEY(operation_id) REFERENCES operations(operation_id),
+  FOREIGN KEY(approval_id) REFERENCES approval_items(approval_id),
+  FOREIGN KEY(syscall_id) REFERENCES syscalls(syscall_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_step_states_state
+  ON workflow_step_states(workflow_instance_id, state);
+
+CREATE TABLE IF NOT EXISTS workflow_step_transitions (
+  transition_id TEXT PRIMARY KEY,
+  workflow_instance_id TEXT NOT NULL,
+  step_id TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  from_state TEXT,
+  to_state TEXT NOT NULL,
+  reason TEXT,
+  linked_operation_id TEXT,
+  linked_approval_id TEXT,
+  linked_syscall_id TEXT,
+  FOREIGN KEY(workflow_instance_id, step_id) REFERENCES workflow_step_states(workflow_instance_id, step_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_step_transitions_instance_ts
+  ON workflow_step_transitions(workflow_instance_id, ts);
+
+-- =========================
+-- 13) Interface specs and instances
+-- =========================
+CREATE TABLE IF NOT EXISTS interface_specs (
+  interface_ref TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  author TEXT NOT NULL,
+  tags_json TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  payload_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_interface_specs_name_created
+  ON interface_specs(name, created_at);
+
+CREATE TABLE IF NOT EXISTS interface_instances (
+  interface_instance_id TEXT PRIMARY KEY,
+  interface_ref TEXT NOT NULL,
+  operation_id TEXT,
+  workflow_instance_id TEXT,
+  created_at TEXT NOT NULL,
+  viewer_audience_id TEXT NOT NULL,
+  pinned_active_state_version TEXT NOT NULL,
+  pinned_capability_snapshot_version TEXT NOT NULL,
+  pinned_audience_graph_version TEXT NOT NULL,
+  gate_summary_json TEXT NOT NULL,
+  blocks_json TEXT NOT NULL,
+  bindings_json TEXT NOT NULL,
+  taint_summary_json TEXT NOT NULL,
+  state TEXT NOT NULL,                -- ready|stale
+  FOREIGN KEY(interface_ref) REFERENCES interface_specs(interface_ref),
+  FOREIGN KEY(operation_id) REFERENCES operations(operation_id),
+  FOREIGN KEY(workflow_instance_id) REFERENCES workflow_instances(workflow_instance_id),
+  CHECK (
+    (operation_id IS NOT NULL AND workflow_instance_id IS NULL) OR
+    (operation_id IS NULL AND workflow_instance_id IS NOT NULL)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_interface_instances_operation
+  ON interface_instances(operation_id);
+
+CREATE INDEX IF NOT EXISTS idx_interface_instances_workflow
+  ON interface_instances(workflow_instance_id);
+
+-- =========================
+-- 14) Audience Graph
 -- =========================
 CREATE TABLE IF NOT EXISTS audience_graph_nodes (
   node_id TEXT PRIMARY KEY,
@@ -427,7 +564,7 @@ CREATE INDEX IF NOT EXISTS idx_audience_scopes_version
   ON audience_graph_scopes(graph_version);
 
 -- =========================
--- 13) Review queue (hypothesis promotion)
+-- 15) Review queue (hypothesis promotion)
 -- =========================
 CREATE TABLE IF NOT EXISTS review_queue_items (
   item_id TEXT PRIMARY KEY,
@@ -458,7 +595,7 @@ CREATE TABLE IF NOT EXISTS review_queue_decisions (
 );
 
 -- =========================
--- 14) Idempotency keys
+-- 16) Idempotency keys
 -- =========================
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   endpoint_scope TEXT NOT NULL,
@@ -475,13 +612,67 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires
   ON idempotency_keys(expires_at);
 
 -- =========================
--- 15) Fact Ledger claims
+-- 17) Fact Ledger claims
 -- =========================
+CREATE TABLE IF NOT EXISTS episodes (
+  episode_id TEXT PRIMARY KEY,
+  scope_type TEXT NOT NULL,          -- user_global|workspace|task_or_workstream|artifact|episode
+  scope_key TEXT NOT NULL,
+  task_scope_key TEXT,
+  workspace_json TEXT NOT NULL,
+  workspace_resolution_basis_json TEXT NOT NULL,
+  workspace_resolution_confidence REAL NOT NULL,
+  branch TEXT,
+  task_prompt TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  files_touched_json TEXT NOT NULL,
+  decisions_json TEXT NOT NULL,
+  unresolved_items_json TEXT NOT NULL,
+  tests_json TEXT NOT NULL,
+  observed_preferences_json TEXT NOT NULL,
+  risk_signals_json TEXT NOT NULL,
+  issue_refs_json TEXT NOT NULL,
+  artifact_refs_json TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  ended_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_episodes_scope_time
+  ON episodes(scope_type, scope_key, ended_at);
+
+CREATE INDEX IF NOT EXISTS idx_episodes_task_scope_time
+  ON episodes(task_scope_key, ended_at);
+
+CREATE TABLE IF NOT EXISTS episode_artifacts (
+  episode_id TEXT NOT NULL,
+  artifact_ref TEXT NOT NULL,
+  PRIMARY KEY(episode_id, artifact_ref),
+  FOREIGN KEY(episode_id) REFERENCES episodes(episode_id)
+);
+
+CREATE TABLE IF NOT EXISTS search_documents (
+  doc_id TEXT PRIMARY KEY,
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  source_type TEXT NOT NULL,         -- episode|claim
+  source_ref TEXT NOT NULL,
+  title TEXT,
+  body_text TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_documents_scope_updated
+  ON search_documents(scope_type, scope_key, updated_at);
+
 CREATE TABLE IF NOT EXISTS claims (
   claim_id TEXT PRIMARY KEY,
   claim_type TEXT NOT NULL,
   claim_key TEXT NOT NULL,
-  status TEXT NOT NULL,               -- candidate|accepted|deprecated|rejected
+  scope_type TEXT NOT NULL,          -- user_global|workspace|task_or_workstream|artifact|episode
+  scope_key TEXT NOT NULL,
+  subject_key TEXT NOT NULL,
+  status TEXT NOT NULL,               -- candidate|accepted|superseded|rejected
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   created_by TEXT NOT NULL,           -- reflection|owner
@@ -499,6 +690,12 @@ CREATE INDEX IF NOT EXISTS idx_claims_key_status
 
 CREATE INDEX IF NOT EXISTS idx_claims_type_status
   ON claims(claim_type, status);
+
+CREATE INDEX IF NOT EXISTS idx_claims_scope_status
+  ON claims(scope_type, scope_key, status);
+
+CREATE INDEX IF NOT EXISTS idx_claims_scope_subject_status
+  ON claims(scope_type, scope_key, subject_key, status);
 
 CREATE TABLE IF NOT EXISTS claim_evidence (
   claim_id TEXT NOT NULL,
@@ -520,7 +717,7 @@ CREATE TABLE IF NOT EXISTS claim_conflicts (
 );
 
 -- =========================
--- 16) Ingest jobs
+-- 18) Ingest jobs
 -- =========================
 CREATE TABLE IF NOT EXISTS ingest_jobs (
   job_id TEXT PRIMARY KEY,
@@ -554,7 +751,7 @@ CREATE INDEX IF NOT EXISTS idx_ingest_job_items_status
   ON ingest_job_items(job_id, status);
 
 -- =========================
--- 17) Artifact registry
+-- 19) Artifact registry
 -- =========================
 CREATE TABLE IF NOT EXISTS artifacts (
   artifact_id TEXT PRIMARY KEY,
@@ -577,26 +774,38 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_job_created
   ON artifacts(ingest_job_id, created_at);
 
 -- =========================
--- 18) Jobs queue (reflection / async work)
+-- 20) Jobs queue (reflection / async work)
 -- =========================
 CREATE TABLE IF NOT EXISTS jobs (
   job_id TEXT PRIMARY KEY,
   created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
   run_after TEXT,
   leased_until TEXT,
   lease_owner TEXT,
-  status TEXT NOT NULL,               -- pending|leased|done|failed
-  attempts INTEGER NOT NULL,
+  lease_epoch INTEGER NOT NULL,
+  status TEXT NOT NULL,               -- pending|leased|completed|failed|dead_lettered|cancelled
+  attempt_count INTEGER NOT NULL,
+  max_attempts INTEGER NOT NULL,
   job_type TEXT NOT NULL,
+  dedupe_key TEXT,
   payload_json TEXT NOT NULL,
-  last_error TEXT
+  sensitivity_s INTEGER NOT NULL,
+  taint_s INTEGER NOT NULL,
+  provenance_refs_json TEXT NOT NULL,
+  last_error_code TEXT,
+  last_error_message TEXT,
+  completed_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after
   ON jobs(status, run_after);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_dedupe_active
+  ON jobs(dedupe_key, status);
+
 -- =========================
--- 19) Blob metadata (content stored in FS/S3)
+-- 21) Blob metadata (content stored in FS/S3)
 -- =========================
 CREATE TABLE IF NOT EXISTS blob_objects (
   content_ref TEXT PRIMARY KEY,
@@ -958,7 +1167,132 @@ CREATE INDEX IF NOT EXISTS idx_schema_registry_hash
   ON schema_registry_entries(content_hash);
 
 -- =========================
--- 12) Audience Graph tables (versioned)
+-- 12) Workflow specs and instances
+-- =========================
+CREATE TABLE IF NOT EXISTS workflow_specs (
+  workflow_ref TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  author TEXT NOT NULL,
+  tags_json JSONB NOT NULL,
+  content_hash TEXT NOT NULL,
+  payload_json JSONB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_specs_name_created
+  ON workflow_specs(name, created_at);
+
+CREATE TABLE IF NOT EXISTS workflow_instances (
+  workflow_instance_id TEXT PRIMARY KEY,
+  workflow_ref TEXT NOT NULL REFERENCES workflow_specs(workflow_ref),
+  parent_request_id TEXT,
+  parent_operation_id TEXT REFERENCES operations(operation_id),
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  state TEXT NOT NULL,
+  state_reason TEXT,
+  pinned_active_state_version TEXT NOT NULL,
+  pinned_capability_snapshot_version TEXT NOT NULL,
+  pinned_audience_graph_version TEXT NOT NULL,
+  inputs_json JSONB NOT NULL,
+  outputs_json JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_instances_ref_state
+  ON workflow_instances(workflow_ref, state);
+
+CREATE TABLE IF NOT EXISTS workflow_instance_transitions (
+  transition_id TEXT PRIMARY KEY,
+  workflow_instance_id TEXT NOT NULL REFERENCES workflow_instances(workflow_instance_id),
+  ts TIMESTAMPTZ NOT NULL,
+  from_state TEXT,
+  to_state TEXT NOT NULL,
+  reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_instance_transitions_instance_ts
+  ON workflow_instance_transitions(workflow_instance_id, ts);
+
+CREATE TABLE IF NOT EXISTS workflow_step_states (
+  workflow_instance_id TEXT NOT NULL REFERENCES workflow_instances(workflow_instance_id),
+  step_id TEXT NOT NULL,
+  step_type TEXT NOT NULL,
+  state TEXT NOT NULL,
+  attempt INT NOT NULL DEFAULT 0,
+  operation_id TEXT REFERENCES operations(operation_id),
+  approval_id TEXT REFERENCES approval_items(approval_id),
+  syscall_id TEXT REFERENCES syscalls(syscall_id),
+  updated_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY(workflow_instance_id, step_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_step_states_state
+  ON workflow_step_states(workflow_instance_id, state);
+
+CREATE TABLE IF NOT EXISTS workflow_step_transitions (
+  transition_id TEXT PRIMARY KEY,
+  workflow_instance_id TEXT NOT NULL,
+  step_id TEXT NOT NULL,
+  ts TIMESTAMPTZ NOT NULL,
+  from_state TEXT,
+  to_state TEXT NOT NULL,
+  reason TEXT,
+  linked_operation_id TEXT,
+  linked_approval_id TEXT,
+  linked_syscall_id TEXT,
+  FOREIGN KEY(workflow_instance_id, step_id) REFERENCES workflow_step_states(workflow_instance_id, step_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_step_transitions_instance_ts
+  ON workflow_step_transitions(workflow_instance_id, ts);
+
+-- =========================
+-- 13) Interface specs and instances
+-- =========================
+CREATE TABLE IF NOT EXISTS interface_specs (
+  interface_ref TEXT PRIMARY KEY,
+  created_at TIMESTAMPTZ NOT NULL,
+  name TEXT NOT NULL,
+  description TEXT,
+  author TEXT NOT NULL,
+  tags_json JSONB NOT NULL,
+  content_hash TEXT NOT NULL,
+  payload_json JSONB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_interface_specs_name_created
+  ON interface_specs(name, created_at);
+
+CREATE TABLE IF NOT EXISTS interface_instances (
+  interface_instance_id TEXT PRIMARY KEY,
+  interface_ref TEXT NOT NULL REFERENCES interface_specs(interface_ref),
+  operation_id TEXT REFERENCES operations(operation_id),
+  workflow_instance_id TEXT REFERENCES workflow_instances(workflow_instance_id),
+  created_at TIMESTAMPTZ NOT NULL,
+  viewer_audience_id TEXT NOT NULL,
+  pinned_active_state_version TEXT NOT NULL,
+  pinned_capability_snapshot_version TEXT NOT NULL,
+  pinned_audience_graph_version TEXT NOT NULL,
+  gate_summary_json JSONB NOT NULL,
+  blocks_json JSONB NOT NULL,
+  bindings_json JSONB NOT NULL,
+  taint_summary_json JSONB NOT NULL,
+  state TEXT NOT NULL,
+  CHECK (
+    (operation_id IS NOT NULL AND workflow_instance_id IS NULL) OR
+    (operation_id IS NULL AND workflow_instance_id IS NOT NULL)
+  )
+);
+
+CREATE INDEX IF NOT EXISTS idx_interface_instances_operation
+  ON interface_instances(operation_id);
+
+CREATE INDEX IF NOT EXISTS idx_interface_instances_workflow
+  ON interface_instances(workflow_instance_id);
+
+-- =========================
+-- 14) Audience Graph tables (versioned)
 -- =========================
 CREATE TABLE IF NOT EXISTS audience_graph_nodes (
   node_id TEXT NOT NULL,
@@ -1002,7 +1336,7 @@ CREATE INDEX IF NOT EXISTS idx_audience_scopes_version
   ON audience_graph_scopes(graph_version);
 
 -- =========================
--- 13) Review queue
+-- 15) Review queue
 -- =========================
 CREATE TABLE IF NOT EXISTS review_queue_items (
   item_id TEXT PRIMARY KEY,
@@ -1032,7 +1366,7 @@ CREATE TABLE IF NOT EXISTS review_queue_decisions (
 );
 
 -- =========================
--- 14) Idempotency keys
+-- 16) Idempotency keys
 -- =========================
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   endpoint_scope TEXT NOT NULL,
@@ -1049,12 +1383,65 @@ CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires
   ON idempotency_keys(expires_at);
 
 -- =========================
--- 15) Fact Ledger claims
+-- 17) Fact Ledger claims
 -- =========================
+CREATE TABLE IF NOT EXISTS episodes (
+  episode_id TEXT PRIMARY KEY,
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  task_scope_key TEXT,
+  workspace_json JSONB NOT NULL,
+  workspace_resolution_basis_json JSONB NOT NULL,
+  workspace_resolution_confidence DOUBLE PRECISION NOT NULL,
+  branch TEXT,
+  task_prompt TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  files_touched_json JSONB NOT NULL,
+  decisions_json JSONB NOT NULL,
+  unresolved_items_json JSONB NOT NULL,
+  tests_json JSONB NOT NULL,
+  observed_preferences_json JSONB NOT NULL,
+  risk_signals_json JSONB NOT NULL,
+  issue_refs_json JSONB NOT NULL,
+  artifact_refs_json JSONB NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL,
+  ended_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_episodes_scope_time
+  ON episodes(scope_type, scope_key, ended_at);
+
+CREATE INDEX IF NOT EXISTS idx_episodes_task_scope_time
+  ON episodes(task_scope_key, ended_at);
+
+CREATE TABLE IF NOT EXISTS episode_artifacts (
+  episode_id TEXT NOT NULL REFERENCES episodes(episode_id),
+  artifact_ref TEXT NOT NULL,
+  PRIMARY KEY(episode_id, artifact_ref)
+);
+
+CREATE TABLE IF NOT EXISTS search_documents (
+  doc_id TEXT PRIMARY KEY,
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_ref TEXT NOT NULL,
+  title TEXT,
+  body_text TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_documents_scope_updated
+  ON search_documents(scope_type, scope_key, updated_at);
+
 CREATE TABLE IF NOT EXISTS claims (
   claim_id TEXT PRIMARY KEY,
   claim_type TEXT NOT NULL,
   claim_key TEXT NOT NULL,
+  scope_type TEXT NOT NULL,
+  scope_key TEXT NOT NULL,
+  subject_key TEXT NOT NULL,
   status TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
@@ -1074,6 +1461,12 @@ CREATE INDEX IF NOT EXISTS idx_claims_key_status
 CREATE INDEX IF NOT EXISTS idx_claims_type_status
   ON claims(claim_type, status);
 
+CREATE INDEX IF NOT EXISTS idx_claims_scope_status
+  ON claims(scope_type, scope_key, status);
+
+CREATE INDEX IF NOT EXISTS idx_claims_scope_subject_status
+  ON claims(scope_type, scope_key, subject_key, status);
+
 CREATE TABLE IF NOT EXISTS claim_evidence (
   claim_id TEXT NOT NULL REFERENCES claims(claim_id),
   evidence_ref TEXT NOT NULL,
@@ -1091,7 +1484,7 @@ CREATE TABLE IF NOT EXISTS claim_conflicts (
 );
 
 -- =========================
--- 16) Ingest jobs
+-- 18) Ingest jobs
 -- =========================
 CREATE TABLE IF NOT EXISTS ingest_jobs (
   job_id TEXT PRIMARY KEY,
@@ -1124,7 +1517,7 @@ CREATE INDEX IF NOT EXISTS idx_ingest_job_items_status
   ON ingest_job_items(job_id, status);
 
 -- =========================
--- 17) Artifact registry
+-- 19) Artifact registry
 -- =========================
 CREATE TABLE IF NOT EXISTS artifacts (
   artifact_id TEXT PRIMARY KEY,
@@ -1144,26 +1537,38 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_job_created
   ON artifacts(ingest_job_id, created_at);
 
 -- =========================
--- 18) Jobs queue
+-- 20) Jobs queue
 -- =========================
 CREATE TABLE IF NOT EXISTS jobs (
   job_id TEXT PRIMARY KEY,
   created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
   run_after TIMESTAMPTZ,
   leased_until TIMESTAMPTZ,
   lease_owner TEXT,
+  lease_epoch INT NOT NULL,
   status TEXT NOT NULL,
-  attempts INT NOT NULL,
+  attempt_count INT NOT NULL,
+  max_attempts INT NOT NULL,
   job_type TEXT NOT NULL,
+  dedupe_key TEXT,
   payload_json JSONB NOT NULL,
-  last_error TEXT
+  sensitivity_s INT NOT NULL,
+  taint_s INT NOT NULL,
+  provenance_refs_json JSONB NOT NULL,
+  last_error_code TEXT,
+  last_error_message TEXT,
+  completed_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status_run_after
   ON jobs(status, run_after);
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_dedupe_active
+  ON jobs(dedupe_key, status);
+
 -- =========================
--- 19) Blob metadata
+-- 21) Blob metadata
 -- =========================
 CREATE TABLE IF NOT EXISTS blob_objects (
   content_ref TEXT PRIMARY KEY,

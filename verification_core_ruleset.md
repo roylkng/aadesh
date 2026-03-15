@@ -269,6 +269,23 @@ If syscall sensitivity exceeds ceiling:
 - deny with `sensitivity_ceiling_exceeded`
 - remediation: sanitize, reduce_scope
 
+### 8.1 Workflow step verification loop (post-wedge)
+For `WorkflowInstance` execution:
+- verification runs step-by-step in topological order
+- each step computes and records:
+  - `R_step`
+  - `S_step`
+  - `max_gate_step`
+  - `approval_mode_step`
+- `transform` steps must reject any side-effect intent
+- `model_call` steps must not emit implicit syscalls; side effects still require explicit `syscall` steps
+- `subworkflow` steps are verified recursively and must not weaken parent constraints
+
+If a step is denied:
+- mark only that step denied/blocked
+- transition workflow instance to `blocked` or `awaiting_approval` deterministically
+- persist step-level denial and audit linkage
+
 ---
 
 ## 9) Taint Laundering detection
@@ -310,6 +327,22 @@ If sanitization is suggested:
 
 No implicit sanitization.
 
+### 9.5 Interface binding taint checks (post-wedge)
+When compiling or validating `InterfaceInstance` bindings from `interface_spec_contract.md`:
+- compute `block_taint_s = max(taint of all bound refs for that block)`
+- compute `block_sensitivity_s = max(sensitivity of all bound refs for that block)`
+- persist both in interface instance payload
+
+Rules:
+- interface blocks must not downlabel taint/sensitivity relative to bound refs
+- blocks sourced from S3/S4 refs must remain at or above that level for the operation/workflow lifespan
+- if viewer ceiling (future audience-aware UI) is below block sensitivity, block must be redacted or omitted
+- unknown binding refs or unresolved provenance must fail closed
+
+Violation handling:
+- deny interface instance compilation/update
+- emit structured verification failure with remediation: reduce bindings, sanitize source, or change viewer scope through governed flow
+
 ---
 
 ## 10) Approval determination and diff requirements
@@ -341,6 +374,17 @@ If any syscall requires approval:
 - emit WS `approval_required` with payload
 - persist approval state (implementation-specific)
 - return control to UI without executing
+
+### 10.4 Workflow step approval transitions (post-wedge)
+If any workflow step requires approval:
+- set step state to `awaiting_approval`
+- set workflow instance state to `awaiting_approval`
+- approval payload must include:
+  - `workflow_instance_id`
+  - `step_id`
+  - `approval_id`
+  - `syscall_id` (for syscall steps)
+- approval consumption must transition step state before any execution resumes
 
 ---
 

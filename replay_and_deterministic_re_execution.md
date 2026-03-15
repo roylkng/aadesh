@@ -5,6 +5,7 @@ This document specifies the **Replay subsystem** for Adesh OS. It defines:
 - what “replay” means in Adesh OS
 - replay modes: `dry_run` vs `full`
 - deterministic reconstruction using pinned versions and stored artifacts
+- deterministic reconstruction of workflow/interface instances when composition layers are active
 - tool execution stubbing and syscall simulation rules
 - required storage anchors and failure behavior
 - replay output artifacts and audit linkage
@@ -67,6 +68,10 @@ Replay is permitted only if the original operation stored:
 * all approvals and modified_payloads (if any)
 * all syscalls and their results/denies (if any)
 * all IPCArtifact refs used
+* if composition features were used:
+  * `workflow_ref` and `workflow_instance_id`
+  * workflow step states and transitions
+  * `interface_ref` and `interface_instance_id` for rendered UI state
 
 If any required anchor is missing:
 
@@ -127,6 +132,9 @@ Load from storage:
 * original ReasoningOutput (structured)
 * original syscall set (envelopes and results/denies)
 * original approvals/OOB references
+* optional workflow/interface anchors:
+  * workflow instance + step transition records
+  * interface instance payloads (blocks/bindings/taint summary)
 
 ### Step 4.3: Choose replay source of truth
 
@@ -204,9 +212,12 @@ Generate a deterministic replay report artifact:
   * gate differences (should be none if pinned)
   * verification differences (may change if rules changed; must be versioned)
   * syscall outcomes:
-
     * original executed vs replay simulated/denied
 * note: if Strategy B used, include model output diff metrics (edit distance)
+* if workflow/interface anchors exist:
+  * workflow step transition diff (original vs replay)
+  * workflow step gate/approval diff
+  * interface block/binding taint diff and redaction reasons
 
 Persist report and link in replay AuditTrace.
 
@@ -229,6 +240,8 @@ Replay must persist:
 3. `simulated_syscall_results` (if dry_run)
 4. any `SyscallDeny` objects created during replay
 5. updated `AuditTrace` with anchors
+6. `workflow_reconstruction_report` when workflow anchors exist
+7. `interface_reconstruction_report` when interface anchors exist
 
 All must be referenced in replay audit trace attachments.
 
@@ -294,6 +307,7 @@ Replay fails closed if:
 * pinned versions cannot be loaded
 * stored reasoning output cannot be parsed/validated
 * storage writes for replay audit fail
+* workflow/interface anchors exist but deterministic reconstruction fails
 
 In all cases:
 
@@ -318,12 +332,20 @@ In all cases:
 * bump verification ruleset version
 * replay must mark output as policy-different.
 
-4. Full replay requires re-approval:
+4. Workflow reconstruction:
+
+* replay a workflow-backed operation and assert step transitions are reconstructed from persisted anchors.
+
+5. Interface reconstruction:
+
+* replay an operation with interface instance and assert block/binding taint summary matches persisted instance data.
+
+6. Full replay requires re-approval:
 
 * try full replay without approval
 * must park in awaiting_approval and not execute.
 
-5. Missing anchor:
+7. Missing anchor:
 
 * delete compiled slice record
 * replay fails with missing anchor reason.

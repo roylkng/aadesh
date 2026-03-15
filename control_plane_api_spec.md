@@ -34,8 +34,14 @@ Idempotency is required for state-changing POST endpoints:
 - `POST /v1/approvals/{approval_id}/oob/verify`
 - `POST /v1/review-queue/{item_id}/decide`
 - `POST /v1/audit/{audit_trace_id}/replay`
+- `POST /v1/artifacts/manual`
 - `POST /v1/ingest/jobs`
 - `POST /v1/ingest/jobs/{job_id}/cancel`
+- `POST /v1/workflow-specs`
+- `POST /v1/workflow-instances`
+- `POST /v1/workflow-instances/{workflow_instance_id}/cancel`
+- `POST /v1/interface-specs`
+- `POST /v1/interface-instances`
 - `POST /v1/capabilities/{kind}/{name}/enable`
 - `POST /v1/capabilities/{kind}/{name}/disable`
 
@@ -102,6 +108,9 @@ Response:
 - Server emits `hello` on connect.
 - At-most-once delivery; client reconciles via REST.
 
+### 2.3 `GET /v1/metrics/wedge`
+Returns wedge KPI counters and latency summary for local Root Owner monitoring.
+
 ## 3) Requests and operations
 
 ### 3.1 `POST /v1/requests`
@@ -141,6 +150,9 @@ Returns current operation snapshot (`OperationSpec` + runtime state metadata).
 
 ### 3.4 `POST /v1/operations/{operation_id}/cancel`
 Cancels operation if policy allows.
+
+### 3.5 `POST /v1/artifacts/manual`
+Creates a manual artifact from explicit user-provided content for request grounding.
 
 ## 4) Gate, compile, syscall, and audit reads
 
@@ -404,20 +416,176 @@ Returns current job status, counters, and bounded redacted errors.
 ### 8.3 `POST /v1/ingest/jobs/{job_id}/cancel`
 Requests cancellation of a pending or running ingest job.
 
-## 9) Ordering and consistency requirements
+## 9) Post-wedge composition endpoints
+
+Status:
+- These routes are canonical for post-wedge composition.
+- They remain outside the active cognitive-sidecar proof unless a new wedge brief explicitly brings them into scope.
+
+### 9.1 `POST /v1/workflow-specs`
+Registers an immutable `WorkflowSpec` from `workflow_spec_contract.md`.
+
+Request body:
+```json
+{
+  "name": "string",
+  "description": "string",
+  "spec": {}
+}
+```
+
+Behavior:
+- canonicalizes and hashes `spec` into `workflow_ref`
+- inserts immutable spec row
+- returns existing `workflow_ref` if identical canonical payload already exists
+
+Response data:
+```json
+{
+  "workflow_ref": "string",
+  "content_hash": "string"
+}
+```
+
+### 9.2 `GET /v1/workflow-specs/{workflow_ref}`
+Returns immutable `WorkflowSpec` payload by content-addressed ref.
+
+### 9.3 `GET /v1/workflow-specs`
+Optional filters:
+- `name`
+- `tag`
+- `limit`
+
+Returns immutable spec summaries.
+
+### 9.4 `POST /v1/workflow-instances`
+Creates a `WorkflowInstance` execution record.
+
+Request body:
+```json
+{
+  "workflow_ref": "string",
+  "inputs": {},
+  "request_context": {
+    "parent_request_id": "string|null",
+    "operation_id": "string|null"
+  }
+}
+```
+
+Behavior:
+- validates `workflow_ref` exists
+- creates instance state and initial step state records
+- pins current versions at creation:
+  - `active_state_version`
+  - `capability_snapshot_version`
+  - `audience_graph_version`
+
+Response data:
+```json
+{
+  "workflow_instance_id": "string",
+  "workflow_ref": "string",
+  "state": "created|running|awaiting_approval|blocked|completed|failed|cancelled"
+}
+```
+
+### 9.5 `GET /v1/workflow-instances/{workflow_instance_id}`
+Returns instance snapshot, pinned versions, and per-step state summaries.
+
+### 9.6 `POST /v1/workflow-instances/{workflow_instance_id}/cancel`
+Requests cancellation of a running workflow instance.
+
+### 9.7 `POST /v1/interface-specs`
+Registers immutable `InterfaceSpec` from `interface_spec_contract.md`.
+
+Request body:
+```json
+{
+  "name": "string",
+  "description": "string",
+  "spec": {}
+}
+```
+
+Behavior:
+- canonicalizes and hashes `spec` into `interface_ref`
+- inserts immutable spec row
+- returns existing `interface_ref` if identical payload already exists
+
+Response data:
+```json
+{
+  "interface_ref": "string",
+  "content_hash": "string"
+}
+```
+
+### 9.8 `GET /v1/interface-specs/{interface_ref}`
+Returns immutable `InterfaceSpec` payload by content-addressed ref.
+
+### 9.9 `GET /v1/interface-specs`
+Optional filters:
+- `name`
+- `tag`
+- `limit`
+
+Returns immutable spec summaries.
+
+### 9.10 `POST /v1/interface-instances`
+Compiles and persists an `InterfaceInstance`.
+
+Request body:
+```json
+{
+  "interface_ref": "string",
+  "operation_id": "string|null",
+  "workflow_instance_id": "string|null",
+  "viewer": {
+    "audience_id": "root_owner"
+  }
+}
+```
+
+Rules:
+- exactly one of `operation_id` or `workflow_instance_id` must be set
+- viewer authorization remains Root Owner only in v0.1 control plane
+- if `workflow_instance_id` is used, the referenced workflow instance must have a persisted `parent_operation_id`; otherwise interface compilation fails closed in the v0.1 reference runtime
+
+Response data:
+```json
+{
+  "interface_instance_id": "string",
+  "interface_ref": "string",
+  "state": "ready|stale"
+}
+```
+
+### 9.11 `GET /v1/interface-instances/{interface_instance_id}`
+Returns persisted `InterfaceInstance` including:
+- pinned versions
+- block list
+- binding list
+- taint summary
+
+## 10) Ordering and consistency requirements
 
 1. Persist operation state transition before emitting `operation_state` WS event.
 2. Persist approvals/OOB state before emitting approval-related WS events.
 3. Persist `SyscallDeny` before returning denial response or WS deny event.
 4. Persist syscall result refs before emitting `syscall_executed`.
 5. On write failure for audit-critical artifacts, fail closed.
+6. Persist workflow instance/step transitions before emitting workflow WS events.
+7. Persist interface instances before emitting interface WS events.
 
-## 10) Compatibility and source-of-truth alignment
+## 11) Compatibility and source-of-truth alignment
 
 This file must align with:
 - `kernel_execution_loop.md`
 - `approval_oob_spec.md`
 - `ingestion_pipeline_spec.md`
+- `workflow_spec_contract.md`
+- `interface_spec_contract.md`
 - `websocket_events_contract.md`
 - `review_queue_and_control_plane.md`
 - `replay_and_deterministic_re_execution.md`

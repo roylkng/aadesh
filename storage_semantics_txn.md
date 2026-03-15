@@ -30,6 +30,7 @@ Adesh OS persists the following logical domains:
 11. **Review Queue** (mutable state with append-only decisions)
 12. **Idempotency keys** (dedupe table)
 13. **Jobs queue** (lease-based)
+14. **Workflow and Interface composition** (immutable specs + instance lifecycle)
 
 ### Strong correctness requirement
 Adesh OS is a governed OS. It must be possible to answer:
@@ -58,6 +59,10 @@ The following IDs must be globally unique:
 - `state_version`
 - `graph_version`
 - `capability_snapshot_version`
+- `workflow_ref`
+- `workflow_instance_id`
+- `interface_ref`
+- `interface_instance_id`
 - `idempotency_key` (per endpoint scope)
 
 ### 1.2 References must be resolvable
@@ -127,6 +132,10 @@ Idempotency must be supported for:
 - `POST /v1/approvals/{approval_id}`
 - `POST /v1/approvals/{approval_id}/oob/start`
 - `POST /v1/approvals/{approval_id}/oob/verify`
+- `POST /v1/workflow-specs`
+- `POST /v1/workflow-instances`
+- `POST /v1/interface-specs`
+- `POST /v1/interface-instances`
 - any endpoint that triggers execution or state mutation
 
 ### 4.2 Idempotency key table semantics
@@ -252,7 +261,7 @@ Rationale:
 
 ### 7.2 OOB challenge lifecycle persistence
 OOB records must be stored with:
-- `operation_id`
+- `approval_id`
 - `challenge_id`
 - `nonce`
 - `status` (pending/verified/consumed/expired)
@@ -265,6 +274,7 @@ Rules:
 - consumption is single-use
 - expired challenges cannot be consumed
 
+---
 ### 7.3 Denial behavior
 If approval fails validation:
 - do not consume OOB
@@ -418,3 +428,48 @@ Dry-run replay must not require any external tool calls.
 
 5. Operation isolation:
    - receiver operation cannot access producer artifacts unless IPCArtifact is persisted and referenced
+
+---
+
+## 14) Workflow and interface composition semantics (post-wedge)
+
+### 14.1 Immutable spec registration
+`WorkflowSpec` and `InterfaceSpec` registration must be content-addressed and immutable:
+- canonicalize payload
+- compute hash ref (`workflow_ref`, `interface_ref`)
+- insert immutable row
+- identical payload returns existing ref
+
+### 14.2 Workflow instance creation (atomic)
+Creating a `WorkflowInstance` must atomically:
+1. validate referenced `workflow_ref` exists
+2. pin `active_state_version`, `capability_snapshot_version`, `audience_graph_version`
+3. persist workflow instance row
+4. persist initial step-state rows
+5. append audit timeline anchor(s)
+
+If any write fails, no partial instance may remain.
+
+### 14.3 Workflow step transitions
+Every workflow step state update must:
+- update latest step state row
+- append a step transition row
+- include linked `operation_id`/`approval_id`/`syscall_id` when present
+
+These writes must be atomic per step transition.
+
+### 14.4 Interface instance persistence
+Compiling an `InterfaceInstance` must persist:
+- immutable block/binding payload
+- pinned versions
+- taint summary
+- operation/workflow binding context
+
+Persist before emitting WS interface events.
+
+### 14.5 Replay anchors for composition
+If composition layers are active, replay-critical anchors include:
+- workflow instance row + step transitions
+- interface instance payload and taint summary
+
+Missing anchors are corruption-level failures for replay and must fail closed.

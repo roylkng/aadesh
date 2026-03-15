@@ -1,12 +1,11 @@
 # Adesh OS Spec Index and Reading Order (v0.1)
 
-This repository contains the production-grade specifications for Adesh OS, a governed agent operating system with:
-- syscall-based tool execution
-- max(R,S) governance with approvals and OOB authorization
-- taint-aware working memory and explicit IPC between operations
-- audience-conditional disclosure via an Audience Graph
-- immutable provenance and replayable audit trails
-- asynchronous reflection loop for governed persona/OS enrichment
+This repository contains the production-grade specifications for the broader Adesh OS architecture and the active Aadesh v1 proof path.
+
+Active product direction:
+- Aadesh is being implemented first as a callable cognitive sidecar
+- the first proof is cross-session continuity and personalization for coding agents
+- the broader governed-execution specs remain in the repo as reusable long-horizon architecture, not as the current product center
 
 This document is the entry point. It lists what exists, what each spec controls, and the recommended reading order using the **actual filenames in this repo**.
 
@@ -16,6 +15,21 @@ Repository organization:
 - `archive/` contains retained legacy material for historical context only.
 
 ---
+
+## 0) Proof-first reading order
+
+If you are working on the active v1 proof, start here:
+
+1. `docs/WEDGE_V0_CODING_COGNITIVE_CONTINUITY.md`
+2. `docs/IMPLEMENTATION_PLAN.md`
+3. `storage_semantics_txn.md`
+4. `storage_provider_port_contract.md`
+5. `fact_ledger_and_reflection_claims.md`
+6. `artifact_normalization_contract.md`
+7. `ingestion_pipeline_spec.md`
+8. `model_output_contract.md`
+
+Then use the broader reading order below only for the specific subsystem you are touching.
 
 ## 1) System overview
 
@@ -195,6 +209,12 @@ Adesh OS runs a strict execution pipeline:
 43. `model_output_contract.md`  
    ReasoningOutput schema and LLM translation boundary (canonical LLM I/O).
 
+44. `interface_spec_contract.md`
+   Post-wedge declarative interface composition contract (`InterfaceSpec`/`InterfaceInstance`) with gate-aware and taint-aware rendering constraints.
+
+45. `workflow_spec_contract.md`
+   Post-wedge workflow composition contract (`WorkflowSpec`/`WorkflowInstance`) with explicit IPC, per-step governance, and deterministic replay anchors.
+
 ---
 
 ## 4) Supporting and meta docs
@@ -210,6 +230,16 @@ Adesh OS runs a strict execution pipeline:
   Task-to-spec navigation map for humans and coding agents.
 - `docs/CODEBASE_MAP.md`  
   Rust workspace traversal map (entrypoints, edit surfaces, tests).
+- `docs/WEDGE_V0_CODING_COGNITIVE_CONTINUITY.md`
+  Active v1 product proof: scoped memory, continuity, and compact current-task guidance.
+- `docs/QUICKSTART.md`
+  First-time local setup and demo path.
+- `docs/WEDGE_V0_EMAIL_DRAFT_AND_SEND.md`
+  Deferred legacy wedge brief retained for reference only.
+- `docs/DEMO_RUNBOOK.md`
+  Generic operator demo flow and troubleshooting.
+- `docs/WEDGE_V0_RUNBOOK.md`
+  Local wedge v0 startup and smoke-validation runbook.
 - `registry/README.md`  
   Bootstrap artifact layout for schema and capability snapshot initialization.
 - `crates/README.md`  

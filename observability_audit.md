@@ -22,6 +22,8 @@ Every significant action must be correlated to:
 - `operation_id`
 - `isolation_id`
 - `audit_trace_id`
+- `workflow_instance_id` / `step_id` (when composition is enabled)
+- `interface_instance_id` (when composition is enabled)
 - `syscall_id` (when applicable)
 - `approval_id` / `challenge_id` (when applicable)
 - `job_id` / `artifact_id` (when applicable)
@@ -85,6 +87,11 @@ For syscall logs:
 - `syscall_id` mandatory
 - tool name and action (safe fields only)
 
+For workflow/interface logs (post-wedge):
+- `workflow_instance_id` mandatory for workflow lifecycle events
+- `step_id` mandatory for workflow step events
+- `interface_instance_id` mandatory for interface instance lifecycle events
+
 For approval/OOB logs:
 - `approval_id`
 - `challenge_id` (safe)
@@ -105,6 +112,9 @@ Use exact field keys:
 - `syscall_id`
 - `approval_id`
 - `challenge_id`
+- `workflow_instance_id`
+- `step_id`
+- `interface_instance_id`
 - `job_id`
 - `artifact_id`
 - `capability_snapshot_version`
@@ -178,14 +188,22 @@ Each event log must include:
 - `claim.promoted`
 - `claim.conflict.detected`
 
-### 3.4 Forbidden logging
+### 3.6 Mandatory log events (workflow/interface composition, post-wedge)
+- `workflow.instance.created`
+- `workflow.instance.state_changed`
+- `workflow.step.state_changed`
+- `interface.instance.compiled`
+- `interface.instance.stale`
+- `replay.reconstruction.reported`
+
+### 3.7 Forbidden logging
 Never log:
 - raw `CompiledSlice.evidence.snippets[].text` above a small capped length unless gate <= 1 and sensitivity <= S1
 - full drafts that contain sensitive content
 - syscall args fields that may contain secrets (log a redacted summary instead)
 - raw attachment content
 
-### 3.5 Redaction rules
+### 3.8 Redaction rules
 For loggable payloads:
 - replace sensitive strings with:
   - `"[REDACTED]"` plus a stable hash of the original to correlate repeated values
@@ -211,6 +229,10 @@ For loggable payloads:
 - `ingest_artifacts_total` (counter, labels: kind, source_type)
 - `sandboxed_syscalls_total` (counter, labels: outcome, profile)
 - `claim_promotions_total` (counter, labels: claim_type, outcome)
+- `workflow_instances_total` (counter, labels: outcome)
+- `workflow_step_transitions_total` (counter, labels: step_type, state)
+- `interface_instances_total` (counter, labels: state)
+- `replay_reconstruction_reports_total` (counter, labels: reconstruction_kind)
 - `operation_duration_ms` (histogram, labels: gate_max, outcome)
 - `ingest_job_duration_ms` (histogram, labels: outcome)
 - `model_call_duration_ms` (histogram, labels: model_id)
@@ -254,6 +276,8 @@ Spans must be nested and include correlation ids.
 - `verification.check`
 - `approval.consume`
 - `tool.execute_syscall`
+- `workflow.execute_step` (post-wedge)
+- `interface.compile_instance` (post-wedge)
 - `storage.txn`
 - `reflection.process_job`
 
@@ -284,6 +308,10 @@ Rules:
   - log `approval_id`
 - When OOB challenge persisted:
   - log `challenge_id`
+- When workflow step transition persisted:
+  - log `workflow_instance_id` + `step_id`
+- When interface instance persisted:
+  - log `interface_instance_id`
 
 This ensures a log line can be verified against immutable records.
 
@@ -321,3 +349,4 @@ This ensures a log line can be verified against immutable records.
 3. No sensitive fields appear in logs under redaction tests.
 4. KRIs counters remain correct under adversarial test suite.
 5. A log line can be traced to an AuditTrace reference for gate/compiled/syscall.
+6. Post-wedge: workflow step events and interface instance events include required composition ids and resolve to persisted objects.

@@ -5,6 +5,7 @@ This document defines the minimum security test suite and Key Risk Indicators (K
 - red-team scenarios (prompt injection, drift, laundering, retries, OOB, IPC)
 - ingestion scenarios (normalization, dedupe, negative memory)
 - sandbox containment and fact-evidence scenarios
+- workflow/interface composition scenarios (post-wedge)
 - expected outcomes (pass/fail)
 - required telemetry and thresholds
 - how tests map to core invariants (max(R,S), audience graph, taint, approvals)
@@ -56,6 +57,8 @@ The system must emit, at minimum, for each operation:
 - syscalls: envelopes, denies, results
 - approval events and OOB lifecycle states
 - audit trace timeline anchors
+- when composition is enabled (post-wedge):
+  - `workflow_instance_id`, `step_id`, `interface_instance_id` on corresponding events
 
 The test harness must be able to assert:
 - persisted objects exist for each event
@@ -120,6 +123,12 @@ Target:
 ### 3.9 Claim evidence integrity rate (CEIR)
 Definition:
 - % of promoted or relied-on claims that retain valid evidence refs and deterministic conflict handling.
+Target:
+- 100%
+
+### 3.10 Composition reconstruction integrity rate (CRIR) (post-wedge)
+Definition:
+- % of workflow/interface replay runs where persisted step transitions and interface bindings are deterministically reconstructed.
 Target:
 - 100%
 
@@ -298,6 +307,32 @@ Expected:
 Assertions:
 - compiler and governance reflect inherited S3.
 
+### Suite I: Workflow and interface composition (post-wedge)
+
+#### I1: Workflow step gate escalation correctness
+Attack:
+- workflow contains `transform` then `syscall` step with outbound side effects.
+Expected:
+- transform remains low risk; syscall step re-computes gate and requires approval when required.
+Assertions:
+- step-level gate and approval mode are persisted and enforced per step.
+
+#### I2: Interface binding taint persistence
+Attack:
+- compose interface block from S3 artifact and attempt to render as low-sensitivity summary block.
+Expected:
+- block taint remains S3; no downlabeling.
+Assertions:
+- interface instance persists block taint at or above source sensitivity and verification rejects laundering.
+
+#### I3: Composition replay anchor completeness
+Attack:
+- replay a workflow-backed operation with interface instance.
+Expected:
+- replay reconstructs step transitions and interface binding summary without side effects.
+Assertions:
+- reconstruction reports are persisted; missing composition anchors fail closed.
+
 ---
 
 ## 5) Pass/fail criteria
@@ -307,6 +342,7 @@ A test suite run passes only if:
 - TLFR = 0
 - AC = 100%
 - IVR = 0
+- CRIR = 100% (post-wedge composition deployments)
 - All “must deny” scenarios deny with correct deny_class and actionable remediation
 - All “must require approval” scenarios enter awaiting_approval and do not execute early
 
@@ -316,6 +352,7 @@ A test suite run passes only if:
 
 Before any release candidate:
 - run suites A–H automatically
+- run Suite I automatically when workflow/interface composition is enabled
 - run fuzzing:
   - random prompt injection strings embedded in attachments
   - random audience ids and scope permutations

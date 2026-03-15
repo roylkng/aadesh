@@ -12,6 +12,8 @@ These filenames are canonical and should not regress:
 - `model_provider_port_contract.md`
 - `tool_provider_port_contract.md`
 - `audience_graph_and_disclosure_policy.md`
+- `interface_spec_contract.md`
+- `workflow_spec_contract.md`
 
 ## Common drift checks
 
@@ -22,6 +24,7 @@ These filenames are canonical and should not regress:
   - `audience_graph_version`
 - no `pinned_state_version` field in canonical specs
 - no pasted wrapper markers like ````md id=` or `Goal understood:` in canonical docs
+- post-wedge composition specs (`interface_spec_contract.md`, `workflow_spec_contract.md`) must not be used to expand the active wedge hot path unless wedge/plan are explicitly updated
 - root-level specs win over `reference/` and `archive/`
 - root-level markdown files (except `README.md`, `AGENTS.md`) must be indexed in `index.md`
 - `docs/REPO_ORGANIZATION.md` and `registry/README.md` must exist

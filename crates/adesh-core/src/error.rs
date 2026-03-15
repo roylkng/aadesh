@@ -24,6 +24,8 @@ pub enum StorageError {
 pub enum AppError {
     #[error("forbidden")]
     Forbidden,
+    #[error("rate limited")]
+    RateLimited,
     #[error("not implemented: {0}")]
     NotImplemented(&'static str),
     #[error("bad request: {0}")]
@@ -40,6 +42,11 @@ impl AppError {
                 "Root Owner authentication required".to_string(),
                 json!({}),
             ),
+            Self::RateLimited => (
+                "RATE_LIMITED",
+                "Too many requests in the current window".to_string(),
+                json!({}),
+            ),
             Self::NotImplemented(msg) => (
                 "PERMANENT",
                 msg.to_string(),
@@ -54,12 +61,27 @@ impl AppError {
                     StorageError::Corruption(_) => "PERMANENT",
                     StorageError::Unavailable(_) | StorageError::Unsupported(_) => "PERMANENT",
                 },
-                err.to_string(),
+                match &err {
+                    StorageError::InvalidInput(message) => message.clone(),
+                    StorageError::NotFound(message) => message.clone(),
+                    StorageError::Conflict(message) => message.clone(),
+                    StorageError::Unavailable(_) => "Dependency is unavailable".to_string(),
+                    StorageError::Unsupported(_) => {
+                        "Requested operation is unsupported".to_string()
+                    }
+                    StorageError::Corruption(_) => "Data integrity check failed".to_string(),
+                },
                 match &err {
                     StorageError::InvalidInput(message) => json!({
                         "component": "storage",
                         "kind": "validation",
                         "violations": [message],
+                    }),
+                    StorageError::Unavailable(message)
+                    | StorageError::Unsupported(message)
+                    | StorageError::Corruption(message) => json!({
+                        "component": "storage",
+                        "backend_error": message,
                     }),
                     _ => json!({"component": "storage"}),
                 },

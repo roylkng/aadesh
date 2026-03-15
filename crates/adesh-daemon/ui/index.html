@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Adesh OS</title>
+  <title>Adesh OS Control Plane Demo</title>
   <style>
     :root {
       --bg-app: #17131f;
@@ -199,6 +199,49 @@
     .stack { display: grid; gap: 10px; }
     .actions { display: flex; gap: var(--space-8); flex-wrap: wrap; }
     .actions button { width: auto; }
+    details summary {
+      cursor: pointer;
+      color: var(--text-secondary);
+      margin-bottom: 8px;
+    }
+    .summary-line {
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      margin: 4px 0 10px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      border: 1px solid var(--border-default);
+      background: rgba(255, 255, 255, 0.03);
+    }
+    .pill.ok {
+      color: var(--success);
+      border-color: rgba(46, 214, 161, 0.42);
+      background: rgba(46, 214, 161, 0.14);
+    }
+    .pill.warn {
+      color: var(--warning);
+      border-color: rgba(255, 180, 84, 0.42);
+      background: rgba(255, 180, 84, 0.14);
+    }
+    .pill.err {
+      color: var(--danger);
+      border-color: rgba(255, 94, 115, 0.42);
+      background: rgba(255, 94, 115, 0.14);
+    }
+    .journey-list {
+      margin: 8px 0 0;
+      padding-left: 18px;
+      color: var(--text-secondary);
+    }
+    .journey-list li {
+      margin: 4px 0;
+    }
     @media (max-width: 900px) {
       .grid { grid-template-columns: 1fr; }
       .three { grid-template-columns: 1fr; }
@@ -210,8 +253,8 @@
   <div class="shell">
     <div class="hero">
       <div>
-        <h1>Adesh OS Email Wedge</h1>
-        <div class="sub">Draft email requests, inspect persisted reasoning output, and approve or deny staged sends against the localhost daemon.</div>
+        <h1>Adesh OS Control Plane Demo</h1>
+        <div class="sub">Submit governed requests, inspect persisted reasoning output, review approvals, and verify audit trails on the localhost daemon.</div>
       </div>
       <div id="health" class="status warn">Loading health...</div>
     </div>
@@ -222,7 +265,7 @@
         <div class="row two">
           <div>
             <label for="token">Root Owner token</label>
-            <input id="token" placeholder="dev-root-owner-token">
+            <input id="token" placeholder="demo-root-owner-token">
           </div>
           <div>
             <label for="requestId">Request ID</label>
@@ -231,7 +274,27 @@
         </div>
         <div class="row">
           <label for="prompt">Request content</label>
-          <textarea id="prompt">Draft and send a concise follow-up email confirming tomorrow's meeting and asking for agenda items.</textarea>
+          <textarea id="prompt">Draft a concise project status update with three next actions for stakeholders.</textarea>
+        </div>
+        <div class="card">
+          <strong>Demo journey</strong>
+          <ol class="journey-list">
+            <li>Submit a request.</li>
+            <li>Inspect operation state and reasoning output.</li>
+            <li>Approve or deny when action requires approval.</li>
+            <li>Confirm syscall status and audit timeline.</li>
+          </ol>
+        </div>
+        <div class="row">
+          <label for="attachments">Attach files (manual upload)</label>
+          <input id="attachments" type="file" multiple>
+          <div class="actions">
+            <button id="uploadAttachments" class="secondary" type="button">Upload selected files</button>
+          </div>
+          <div class="card">
+            <strong>Attached artifacts</strong>
+            <pre id="attachedArtifacts">[]</pre>
+          </div>
         </div>
         <div class="row two">
           <button id="submitRequest">Submit request</button>
@@ -268,16 +331,31 @@
         <h2>Current Operation</h2>
         <div class="stack">
           <div><strong>Operation:</strong> <span id="operationId" class="mono">none</span></div>
-          <div><strong>State:</strong> <span id="operationState">unknown</span></div>
+          <div><strong>State:</strong> <span id="operationState" class="pill warn">unknown</span></div>
           <div><strong>Audit trace:</strong> <span id="auditTraceId" class="mono">none</span></div>
         </div>
         <div class="card">
-          <strong>Draft / reasoning output</strong>
-          <pre id="reasoningOutput">No reasoning output loaded.</pre>
+          <strong>Draft preview</strong>
+          <pre id="draftPreview">No draft yet.</pre>
+        </div>
+        <div class="card">
+          <strong>Live reasoning stream</strong>
+          <pre id="reasoningStream">No live stream yet.</pre>
+        </div>
+        <div class="card">
+          <strong>Reasoning output</strong>
+          <details>
+            <summary>Show raw JSON</summary>
+            <pre id="reasoningOutput">No reasoning output loaded.</pre>
+          </details>
         </div>
         <div class="card">
           <strong>Syscalls</strong>
-          <pre id="syscalls">[]</pre>
+          <div id="syscallSummary" class="summary-line">No syscalls recorded.</div>
+          <details>
+            <summary>Show raw syscall records</summary>
+            <pre id="syscalls">[]</pre>
+          </details>
         </div>
       </section>
     </div>
@@ -291,8 +369,12 @@
       <section class="panel">
         <h2>Current Capabilities</h2>
         <div><strong>Active snapshot:</strong> <span id="capabilitySnapshotVersion" class="mono">unknown</span></div>
+        <div id="capabilitySummary" class="summary-line">No capability snapshot loaded.</div>
         <div class="card">
-          <pre id="capabilityPayload">No capability snapshot loaded.</pre>
+          <details>
+            <summary>Show raw capability snapshot</summary>
+            <pre id="capabilityPayload">No capability snapshot loaded.</pre>
+          </details>
         </div>
       </section>
 
@@ -301,18 +383,35 @@
         <div id="reviewQueue" class="stack"></div>
       </section>
     </div>
+
+    <section class="panel">
+      <h2>Wedge Metrics</h2>
+      <div class="stack">
+        <div><strong>Requests:</strong> <span id="metricRequests">0</span></div>
+        <div><strong>Completed drafts:</strong> <span id="metricDrafts">0</span></div>
+        <div><strong>Approvals:</strong> <span id="metricApprovals">0</span></div>
+        <div><strong>Sends executed:</strong> <span id="metricSends">0</span></div>
+        <div><strong>Duplicate-send violations:</strong> <span id="metricDupes">0</span></div>
+        <div><strong>Draft latency p50 (ms):</strong> <span id="metricLatency">n/a</span></div>
+      </div>
+    </section>
   </div>
 
   <script>
     const state = {
       lastOperationId: localStorage.getItem('adesh.lastOperationId') || '',
-      lastAuditTraceId: localStorage.getItem('adesh.lastAuditTraceId') || ''
+      lastAuditTraceId: localStorage.getItem('adesh.lastAuditTraceId') || '',
+      attachments: [],
+      streamBuffers: new Map()
     };
 
     const tokenEl = document.getElementById('token');
     const requestIdEl = document.getElementById('requestId');
     const promptEl = document.getElementById('prompt');
+    const submitRequestEl = document.getElementById('submitRequest');
     const requestStatusEl = document.getElementById('requestStatus');
+    const attachmentsEl = document.getElementById('attachments');
+    const attachedArtifactsEl = document.getElementById('attachedArtifacts');
     const densityEl = document.getElementById('density');
     const motionEl = document.getElementById('motion');
     const accentEl = document.getElementById('accent');
@@ -320,15 +419,29 @@
     const operationIdEl = document.getElementById('operationId');
     const operationStateEl = document.getElementById('operationState');
     const auditTraceIdEl = document.getElementById('auditTraceId');
+    const draftPreviewEl = document.getElementById('draftPreview');
     const reasoningOutputEl = document.getElementById('reasoningOutput');
+    const reasoningStreamEl = document.getElementById('reasoningStream');
+    const syscallSummaryEl = document.getElementById('syscallSummary');
     const syscallsEl = document.getElementById('syscalls');
     const approvalsEl = document.getElementById('approvals');
     const capabilitySnapshotVersionEl = document.getElementById('capabilitySnapshotVersion');
+    const capabilitySummaryEl = document.getElementById('capabilitySummary');
     const capabilityPayloadEl = document.getElementById('capabilityPayload');
     const reviewQueueEl = document.getElementById('reviewQueue');
+    const metricRequestsEl = document.getElementById('metricRequests');
+    const metricDraftsEl = document.getElementById('metricDrafts');
+    const metricApprovalsEl = document.getElementById('metricApprovals');
+    const metricSendsEl = document.getElementById('metricSends');
+    const metricDupesEl = document.getElementById('metricDupes');
+    const metricLatencyEl = document.getElementById('metricLatency');
 
-    tokenEl.value = localStorage.getItem('adesh.token') || 'dev-root-owner-token';
-    requestIdEl.value = `req-ui-${Date.now()}`;
+    function nextRequestId() {
+      return `req-ui-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    }
+
+    tokenEl.value = localStorage.getItem('adesh.token') || 'demo-root-owner-token';
+    requestIdEl.value = nextRequestId();
     densityEl.value = localStorage.getItem('adesh.ui.density') || 'comfortable';
     motionEl.value = localStorage.getItem('adesh.ui.motion') || 'default';
     accentEl.value = localStorage.getItem('adesh.ui.accent') || 'cyan';
@@ -359,6 +472,31 @@
       el.textContent = text;
     }
 
+    function setOperationState(state, reason) {
+      const terminalOk = state === 'completed';
+      const terminalWarn = state === 'awaiting_approval' || state === 'created' || state === 'running';
+      const cls = terminalOk ? 'ok' : terminalWarn ? 'warn' : 'err';
+      operationStateEl.className = `pill ${cls}`;
+      operationStateEl.textContent = `${state}${reason ? ` (${reason})` : ''}`;
+    }
+
+    function summarizeCapabilities(payload) {
+      const capabilities = Array.isArray(payload?.capabilities) ? payload.capabilities : [];
+      const actionCount = capabilities.reduce((count, capability) => {
+        return count + (Array.isArray(capability.actions) ? capability.actions.length : 0);
+      }, 0);
+      return `${capabilities.length} tools / ${actionCount} actions enabled`;
+    }
+
+    function renderDraftPreview(reasoningOutput) {
+      const draft = reasoningOutput?.drafts?.[0];
+      if (!draft || typeof draft.content !== 'string') {
+        draftPreviewEl.textContent = 'No draft in model output.';
+        return;
+      }
+      draftPreviewEl.textContent = draft.content;
+    }
+
     function authHeaders(extra = {}) {
       return {
         'Content-Type': 'application/json',
@@ -377,6 +515,28 @@
       return body;
     }
 
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || '');
+          const marker = 'base64,';
+          const idx = result.indexOf(marker);
+          if (idx === -1) {
+            reject(new Error('Failed to encode file as base64'));
+            return;
+          }
+          resolve(result.slice(idx + marker.length));
+        };
+        reader.onerror = () => reject(reader.error || new Error('file read failed'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function renderAttachedArtifacts() {
+      attachedArtifactsEl.textContent = JSON.stringify(state.attachments, null, 2);
+    }
+
     async function refreshHealth() {
       try {
         const body = await api('/v1/health');
@@ -390,9 +550,11 @@
       try {
         const body = await api('/v1/capabilities', { headers: authHeaders() });
         capabilitySnapshotVersionEl.textContent = body.data.capability_snapshot_version;
+        capabilitySummaryEl.textContent = summarizeCapabilities(body.data.payload);
         capabilityPayloadEl.textContent = JSON.stringify(body.data.payload, null, 2);
       } catch (error) {
         capabilitySnapshotVersionEl.textContent = 'error';
+        capabilitySummaryEl.textContent = 'Capability refresh failed.';
         capabilityPayloadEl.textContent = `Capability refresh failed: ${error.message}`;
       }
     }
@@ -405,22 +567,42 @@
       localStorage.setItem('adesh.lastOperationId', operationId);
       localStorage.setItem('adesh.lastAuditTraceId', op.data.audit_trace_id);
       operationIdEl.textContent = op.data.operation_id;
-      operationStateEl.textContent = `${op.data.state}${op.data.state_reason ? ` (${op.data.state_reason})` : ''}`;
+      setOperationState(op.data.state, op.data.state_reason);
       auditTraceIdEl.textContent = op.data.audit_trace_id;
 
       try {
         const reasoning = await api(`/v1/operations/${operationId}/reasoning-output`, { headers: authHeaders() });
+        renderDraftPreview(reasoning.data.reasoning_output);
         reasoningOutputEl.textContent = JSON.stringify(reasoning.data.reasoning_output, null, 2);
       } catch {
+        draftPreviewEl.textContent = 'No reasoning output available.';
         reasoningOutputEl.textContent = 'No reasoning output available.';
       }
 
       try {
         const syscalls = await api(`/v1/operations/${operationId}/syscalls`, { headers: authHeaders() });
+        const rows = Array.isArray(syscalls.data) ? syscalls.data : [];
+        const executed = rows.filter(row => row.status === 'executed').length;
+        syscallSummaryEl.textContent = `${executed}/${rows.length} syscalls executed`;
         syscallsEl.textContent = JSON.stringify(syscalls.data, null, 2);
       } catch {
+        syscallSummaryEl.textContent = 'No syscalls recorded.';
         syscallsEl.textContent = '[]';
       }
+
+      return op.data.state;
+    }
+
+    async function pollOperationUntilStable(operationId) {
+      const terminalStates = new Set(['completed', 'awaiting_approval', 'blocked', 'failed', 'cancelled']);
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const stateValue = await loadOperation(operationId);
+        if (stateValue && terminalStates.has(stateValue)) {
+          return stateValue;
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      return null;
     }
 
     function approvalCard(approval) {
@@ -520,6 +702,20 @@
       }
     }
 
+    async function refreshMetrics() {
+      try {
+        const body = await api('/v1/metrics/wedge', { headers: authHeaders() });
+        metricRequestsEl.textContent = body.data.requests_total;
+        metricDraftsEl.textContent = body.data.completed_drafts_total;
+        metricApprovalsEl.textContent = body.data.approvals_total;
+        metricSendsEl.textContent = body.data.sends_executed_total;
+        metricDupesEl.textContent = body.data.duplicate_send_violations;
+        metricLatencyEl.textContent = body.data.draft_latency_p50_ms ?? 'n/a';
+      } catch (error) {
+        metricLatencyEl.textContent = `error: ${error.message}`;
+      }
+    }
+
     function connectEvents() {
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
       const token = encodeURIComponent(tokenEl.value);
@@ -530,6 +726,26 @@
           const envelope = JSON.parse(event.data);
           if (envelope.type === 'hello') {
             setStatus(healthEl, 'ok', `Health: live events connected | snapshot ${envelope.data.capability_snapshot_version}`);
+            return;
+          }
+
+          if (envelope.type === 'reasoning_stream_start') {
+            const streamId = envelope.data.stream_id;
+            state.streamBuffers.set(streamId, '');
+            reasoningStreamEl.textContent = '';
+            return;
+          }
+          if (envelope.type === 'reasoning_stream_chunk') {
+            const streamId = envelope.data.stream_id;
+            const current = state.streamBuffers.get(streamId) || '';
+            const next = `${current}${envelope.data.delta || ''}`;
+            state.streamBuffers.set(streamId, next);
+            reasoningStreamEl.textContent = next;
+            return;
+          }
+          if (envelope.type === 'reasoning_stream_end') {
+            const streamId = envelope.data.stream_id;
+            reasoningStreamEl.textContent = state.streamBuffers.get(streamId) || reasoningStreamEl.textContent;
             return;
           }
 
@@ -556,6 +772,15 @@
           if (envelope.type === 'capability_update') {
             await refreshCapabilities();
           }
+
+          if (
+            envelope.type === 'operation_state' ||
+            envelope.type === 'approval_granted' ||
+            envelope.type === 'approval_denied' ||
+            envelope.type === 'syscall_executed'
+          ) {
+            await refreshMetrics();
+          }
         } catch (error) {
           console.error('event handling failed', error);
         }
@@ -570,10 +795,48 @@
       });
     }
 
-    document.getElementById('submitRequest').addEventListener('click', async () => {
-      const requestId = requestIdEl.value || `req-ui-${Date.now()}`;
+    document.getElementById('uploadAttachments').addEventListener('click', async () => {
+      const files = Array.from(attachmentsEl.files || []);
+      if (!files.length) {
+        alert('Select one or more files first.');
+        return;
+      }
+
+      for (const file of files) {
+        try {
+          const contentBase64 = await fileToBase64(file);
+          const response = await api('/v1/artifacts/manual', {
+            method: 'POST',
+            headers: authHeaders({ 'Idempotency-Key': `ui-artifact-${file.name}-${file.size}` }),
+            body: JSON.stringify({
+              filename: file.name,
+              media_type: file.type || 'application/octet-stream',
+              content_base64: contentBase64,
+              sensitivity_hint: null
+            })
+          });
+          state.attachments.push({
+            ref_id: response.data.ref_id,
+            ref_type: response.data.ref_type,
+            sensitivity_hint: response.data.sensitivity_hint
+          });
+        } catch (error) {
+          alert(`Attachment upload failed for ${file.name}: ${error.message}`);
+          break;
+        }
+      }
+
+      renderAttachedArtifacts();
+      attachmentsEl.value = '';
+    });
+
+    submitRequestEl.addEventListener('click', async () => {
+      const requestId = requestIdEl.value || nextRequestId();
       requestIdEl.value = requestId;
+      submitRequestEl.disabled = true;
+      submitRequestEl.textContent = 'Submitting...';
       setStatus(requestStatusEl, 'warn', 'Submitting request...');
+      reasoningStreamEl.textContent = 'Waiting for stream...';
       try {
         const response = await api('/v1/requests', {
           method: 'POST',
@@ -584,15 +847,23 @@
             received_at: new Date().toISOString(),
             requesting_principal: { principal_type: 'root_owner', principal_id: 'owner-1' },
             requesting_audience_id: 'root_owner',
-            input: { kind: 'text', content: promptEl.value },
+            input: { kind: 'text', content: promptEl.value, attachments: state.attachments },
             constraints: { policy_mode: 'default', budgets: { token_budget: 512 } }
           })
         });
         setStatus(requestStatusEl, 'ok', `Created ${response.data.primary_operation_id}`);
-        await loadOperation(response.data.primary_operation_id);
-        await refreshApprovals();
+        try {
+          await pollOperationUntilStable(response.data.primary_operation_id);
+        } catch (error) {
+          setStatus(requestStatusEl, 'warn', `Created ${response.data.primary_operation_id}, but operation detail refresh failed: ${error.message}`);
+        }
+        await Promise.allSettled([refreshApprovals(), refreshMetrics()]);
+        requestIdEl.value = nextRequestId();
       } catch (error) {
         setStatus(requestStatusEl, 'err', `Request failed: ${error.message}`);
+      } finally {
+        submitRequestEl.disabled = false;
+        submitRequestEl.textContent = 'Submit request';
       }
     });
 
@@ -602,6 +873,7 @@
         refreshApprovals(),
         refreshReviewQueue(),
         refreshCapabilities(),
+        refreshMetrics(),
         loadOperation(state.lastOperationId)
       ]);
     });
@@ -610,6 +882,8 @@
     refreshApprovals();
     refreshReviewQueue();
     refreshCapabilities();
+    refreshMetrics();
+    renderAttachedArtifacts();
     applyUiPreferences();
     connectEvents();
     if (state.lastOperationId) {

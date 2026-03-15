@@ -11,6 +11,7 @@ pub struct ModelGenerateInput {
     pub audit_trace_id: String,
     pub request_content: String,
     pub attachment_count: usize,
+    pub attachment_context: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

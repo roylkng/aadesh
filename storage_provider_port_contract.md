@@ -117,6 +117,12 @@ StorageProvider must persist and fetch:
 - claim records with lifecycle state
 - conflict links and promotion metadata
 
+### 2.14 Workflow and interface composition
+- immutable `WorkflowSpec` rows keyed by `workflow_ref`
+- immutable `InterfaceSpec` rows keyed by `interface_ref`
+- workflow instance lifecycle and per-step state transitions
+- interface instance payloads bound to operation/workflow context and pinned versions
+
 ---
 
 ## 3) Method-level contract (conceptual interface)
@@ -621,3 +627,114 @@ Inputs:
 - promotion metadata
 Semantics:
 - atomic promotion/deprecation transition with experience event and any review linkage
+
+---
+
+## 21) Workflow and interface methods
+
+### 21.1 register_workflow_spec
+Inputs:
+- canonical workflow JSON payload
+- optional display metadata (`name`, `description`, `tags`)
+Semantics:
+- canonicalize payload and compute `workflow_ref`
+- persist immutable row keyed by `workflow_ref`
+- identical payload must return the same `workflow_ref`
+
+### 21.2 get_workflow_spec
+Inputs:
+- `workflow_ref`
+Returns:
+- immutable `WorkflowSpec` row and payload
+
+### 21.3 find_workflow_specs
+Inputs:
+- optional `name`
+- optional `tag`
+- optional `author`
+Returns:
+- matching immutable workflow spec metadata rows
+
+### 21.4 create_workflow_instance
+Inputs:
+- `workflow_instance_id`
+- `workflow_ref`
+- input artifact/value references
+- pinned versions:
+  - `active_state_version`
+  - `capability_snapshot_version`
+  - `audience_graph_version`
+- optional idempotency key
+Semantics:
+- atomic insert of instance row + initial state/step rows
+- must fail with `NotFound` if `workflow_ref` does not exist
+
+### 21.5 get_workflow_instance
+Inputs:
+- `workflow_instance_id`
+Returns:
+- workflow instance snapshot including pinned versions and step states
+
+### 21.6 update_workflow_instance_state_atomic
+Inputs:
+- `workflow_instance_id`
+- expected current state
+- new state
+- reason
+Semantics:
+- compare-and-set update with append-only transition row
+
+### 21.7 upsert_workflow_step_state_atomic
+Inputs:
+- `workflow_instance_id`
+- `step_id`
+- step state
+- optional linked ids (`operation_id`, `approval_id`, `syscall_id`)
+Semantics:
+- deterministic per-step lifecycle updates
+- append-only transition event/row for every state change
+
+### 21.8 register_interface_spec
+Inputs:
+- canonical interface JSON payload
+- optional display metadata (`name`, `description`, `tags`)
+Semantics:
+- canonicalize payload and compute `interface_ref`
+- persist immutable row keyed by `interface_ref`
+- identical payload must return the same `interface_ref`
+
+### 21.9 get_interface_spec
+Inputs:
+- `interface_ref`
+Returns:
+- immutable `InterfaceSpec` row and payload
+
+### 21.10 find_interface_specs
+Inputs:
+- optional `name`
+- optional `tag`
+- optional `author`
+Returns:
+- matching immutable interface spec metadata rows
+
+### 21.11 put_interface_instance
+Inputs:
+- `interface_instance_id`
+- `interface_ref`
+- one of `operation_id` or `workflow_instance_id`
+- pinned versions:
+  - `active_state_version`
+  - `capability_snapshot_version`
+  - `audience_graph_version`
+- `blocks_json`
+- `bindings_json`
+- `taint_summary_json`
+Semantics:
+- immutable insert keyed by `interface_instance_id`
+- fail with `NotFound` if referenced spec or operation/workflow context does not exist
+
+### 21.12 get_interface_instance
+Inputs:
+- `interface_instance_id`
+Returns:
+- persisted interface instance payload with pinned versions and bindings

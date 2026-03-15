@@ -1,7 +1,7 @@
 # Email Send Payload Contract Spec v0.1
 Adesh OS
 
-This document defines the canonical payload shape and normalization rules for the email send actuator used by the v0 email draft-and-send wedge.
+This document defines the canonical payload shape and normalization rules for the email send actuator used by the deferred email execution slice. It remains canonical for that slice, but it is not part of the active cognitive-sidecar proof path.
 
 This is a behavioral contract for:
 - approval diff payloads

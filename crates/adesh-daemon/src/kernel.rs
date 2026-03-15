@@ -47,9 +47,32 @@ pub fn compile_and_verify_stub(
         .unwrap_or(0);
 
     let requested_send = content_lower.contains("send");
+    let send_capability_available = email_send_descriptor.is_some();
+    let send_diff_supported = email_send_descriptor
+        .map(|descriptor| descriptor.diff_supported)
+        .unwrap_or(false);
     let unknown_audience = content_lower.contains("[[unknown_audience]]");
     let taint_launder = content_lower.contains("[[taint_launder]]")
         || (attachment_sensitivity >= 3 && content_lower.contains("public"));
+    let high_stakes_keywords = [
+        "legal",
+        "contract",
+        "compliance",
+        "security incident",
+        "breach",
+        "medical",
+        "financial",
+        "invoice",
+        "payment",
+        "tax",
+    ];
+    let high_stakes_requested = content_lower.contains("[[high_stakes]]")
+        || high_stakes_keywords
+            .iter()
+            .any(|keyword| content_lower.contains(keyword));
+    let has_grounding_evidence =
+        !request.input.attachments.is_empty() || content_lower.contains("[[evidence_attached]]");
+    let high_stakes_without_evidence = high_stakes_requested && !has_grounding_evidence;
 
     let risk_r = if requested_send { 3 } else { 1 };
     let sensitivity_s = attachment_sensitivity;
@@ -59,6 +82,18 @@ pub fn compile_and_verify_stub(
     let outcome = if taint_launder {
         KernelOutcome::Blocked {
             reason: "taint_laundering_denied".to_string(),
+        }
+    } else if requested_send && !send_capability_available {
+        KernelOutcome::Blocked {
+            reason: "send_capability_unavailable".to_string(),
+        }
+    } else if requested_send && !send_diff_supported {
+        KernelOutcome::Blocked {
+            reason: "diff_unavailable_for_send".to_string(),
+        }
+    } else if high_stakes_without_evidence {
+        KernelOutcome::Blocked {
+            reason: "high_stakes_evidence_required".to_string(),
         }
     } else if unknown_audience {
         KernelOutcome::Blocked {
@@ -80,8 +115,12 @@ pub fn compile_and_verify_stub(
 
     let predicates = json!({
         "requested_send": requested_send,
+        "send_capability_available": send_capability_available,
+        "send_diff_supported": send_diff_supported,
         "unknown_audience": unknown_audience,
         "taint_launder": taint_launder,
+        "high_stakes_requested": high_stakes_requested,
+        "high_stakes_without_evidence": high_stakes_without_evidence,
     });
     let constraints = json!({
         "wedge": "email_draft_and_send",
@@ -169,12 +208,95 @@ pub fn approval_item_input(
 
 #[cfg(test)]
 mod tests {
-    use super::should_allow_retry_for_same_deny;
+    use adesh_contracts::{
+        RequestBudgets, RequestConstraints, RequestEnvelope, RequestInput, RequestSource,
+        RequestingPrincipal,
+    };
+    use adesh_core::action_schemas::email_send_descriptor;
+    use chrono::Utc;
+
+    use super::{KernelOutcome, compile_and_verify_stub, should_allow_retry_for_same_deny};
 
     #[test]
     fn anti_retry_returns_same_deny_then_blocks() {
         assert!(should_allow_retry_for_same_deny(0));
         assert!(!should_allow_retry_for_same_deny(1));
         assert!(!should_allow_retry_for_same_deny(2));
+    }
+
+    fn send_request_fixture() -> RequestEnvelope {
+        RequestEnvelope {
+            request_id: "req-kernel-send".to_string(),
+            source: RequestSource {
+                channel: "http".to_string(),
+                transport: "rest".to_string(),
+                client_id: None,
+            },
+            received_at: Utc::now(),
+            requesting_principal: RequestingPrincipal {
+                principal_type: "root_owner".to_string(),
+                principal_id: "owner-1".to_string(),
+                owner_session_id: None,
+            },
+            requesting_audience_id: "root_owner".to_string(),
+            input: RequestInput {
+                kind: "text".to_string(),
+                content: "draft and send this email".to_string(),
+                attachments: Vec::new(),
+            },
+            constraints: RequestConstraints {
+                policy_mode: "default".to_string(),
+                budgets: RequestBudgets {
+                    token_budget: 256,
+                    latency_ms: None,
+                    cost_cents: None,
+                    compute_units: None,
+                },
+                preferred_model: None,
+                allow_multi_operation: None,
+            },
+            conversation: None,
+            intent_anchor: None,
+        }
+    }
+
+    #[test]
+    fn send_is_blocked_when_capability_missing() {
+        let request = send_request_fixture();
+        let artifacts = compile_and_verify_stub(
+            &request,
+            "op-1",
+            "iso-1",
+            "audit-1",
+            "state:1",
+            "cap:missing",
+            "graph:1",
+            None,
+        );
+        match artifacts.outcome {
+            KernelOutcome::Blocked { reason } => assert_eq!(reason, "send_capability_unavailable"),
+            _ => panic!("expected blocked outcome when send capability is missing"),
+        }
+    }
+
+    #[test]
+    fn send_is_blocked_when_diff_unavailable() {
+        let request = send_request_fixture();
+        let mut descriptor = email_send_descriptor();
+        descriptor.diff_supported = false;
+        let artifacts = compile_and_verify_stub(
+            &request,
+            "op-2",
+            "iso-2",
+            "audit-2",
+            "state:1",
+            "cap:bootstrap",
+            "graph:1",
+            Some(&descriptor),
+        );
+        match artifacts.outcome {
+            KernelOutcome::Blocked { reason } => assert_eq!(reason, "diff_unavailable_for_send"),
+            _ => panic!("expected blocked outcome when diff is unavailable"),
+        }
     }
 }

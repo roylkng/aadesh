@@ -205,6 +205,29 @@ Where predicates are derived from:
 - tool/action metadata
 - capability `execution_class` and sandbox policy metadata
 
+### 3.5 Workflow step risk and sensitivity aggregation (post-wedge)
+When executing `WorkflowInstance` steps from `workflow_spec_contract.md`, governance computes gate fields per step deterministically.
+
+Step-type risk floors:
+- `transform`: `R_step_floor = R0`
+- `model_call`: `R_step_floor = R1`
+- `syscall`: `R_step_floor = max(capability risk floor, predicate risk)`
+- `subworkflow`: `R_step_floor = max(child entry step floors)`
+
+Step sensitivity:
+- compute from bound step inputs (`artifact_id`, `ipc_artifact`, prior step outputs)
+- include inherited operation/instance taint and sensitivity ceilings
+- default unknown step input sensitivity to S2 (conservative)
+
+Per-step gate:
+- `R_step = max(R_step_floor, R_from_predicates(step))`
+- `S_step = max(sensitivity(step_inputs))`
+- `max_gate_step = max(R_step, S_step)`
+
+Per-step approvals:
+- approval binding must include `workflow_instance_id`, `step_id`, and `syscall_id` (when step type is `syscall`)
+- edits to step syscall payload require re-validation and re-gating
+
 ---
 
 ## 4) max_gate and ApprovalMode derivation
@@ -236,6 +259,13 @@ Generally, approvals are syscall-specific. Operation-level approval.mode is used
 - operations that are purely an approval wrapper for a single syscall
 
 Otherwise, set operation approval.mode = `none` and enforce at syscall stage.
+
+### 4.4 Workflow-level approval mode (post-wedge)
+For workflow execution:
+- compute approval mode per step using `max_gate_step`
+- `transform` and `model_call` steps do not execute external side effects and should normally resolve to `none`
+- `syscall` steps follow the same confirm/diff/oob_required/refuse mapping as standalone syscalls
+- if any step is in approval-required state, workflow instance state transitions to `awaiting_approval` until that step resolves
 
 ---
 

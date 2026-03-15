@@ -7,6 +7,16 @@ Use this file when you know the question but do not know which spec to open firs
 
 ## 1) Fast path by task
 
+### Active v1 cognitive proof
+- Start: `docs/WEDGE_V0_CODING_COGNITIVE_CONTINUITY.md`
+- Sequencing: `docs/IMPLEMENTATION_PLAN.md`
+- Storage ordering and fail-closed rules: `storage_semantics_txn.md`
+- Storage contract: `storage_provider_port_contract.md`
+- Fact and memory promotion substrate: `fact_ledger_and_reflection_claims.md`
+- Ingestion and artifact normalization inputs:
+  - `artifact_normalization_contract.md`
+  - `ingestion_pipeline_spec.md`
+
 ### Request lifecycle and execution
 - Start: `kernel_execution_loop.md`
 - Governance gates: `governance_kernel_logic.md`
@@ -43,9 +53,19 @@ Use this file when you know the question but do not know which spec to open firs
 - Ingestion flow: `ingestion_pipeline_spec.md`
 - Artifact normalization rules: `artifact_normalization_contract.md`
 
+### Post-wedge composition contracts
+- Declarative UI composition and bindings: `interface_spec_contract.md`
+- Durable workflow composition and step semantics: `workflow_spec_contract.md`
+- Generic schema-backed tool/action surface: `schema_based_tools_and_actions.md`
+
 ### Product wedge and scope lock
-- Wedge scope: `docs/WEDGE_V0_EMAIL_DRAFT_AND_SEND.md`
+- Active wedge scope: `docs/WEDGE_V0_CODING_COGNITIVE_CONTINUITY.md`
 - Implementation sequencing: `docs/IMPLEMENTATION_PLAN.md`
+- Deferred legacy wedge scope: `docs/WEDGE_V0_EMAIL_DRAFT_AND_SEND.md`
+- Deferred legacy wedge runbook: `docs/WEDGE_V0_RUNBOOK.md`
+- Generic quickstart and current runtime demo docs:
+  - `docs/QUICKSTART.md`
+  - `docs/DEMO_RUNBOOK.md`
 
 ## 2) Endpoint-to-spec map
 

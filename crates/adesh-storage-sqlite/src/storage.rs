@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -7,11 +8,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use uuid::Uuid;
 
 use adesh_contracts::{
-    ApprovalDecisionResponse, ApprovalItemDetail, ApprovalItemSummary,
+    ApprovalDecisionResponse, ApprovalItemDetail, ApprovalItemSummary, ArtifactResponse,
     CapabilitySnapshotMintResponse, CapabilitySnapshotResponse, CompiledSliceResponse,
-    CurrentVersionsResponse, GateDecisionResponse, OperationResponse, ReasoningOutputResponse,
-    ReplayResponse, RequestAcceptedResponse, RequestEnvelope, ReviewDecisionResponse,
-    ReviewItemDetail, ReviewItemSummary, SchemaEntryResponse, SyscallResponse,
+    CurrentVersionsResponse, GateDecisionResponse, IngestJobCountersResponse, IngestJobResponse,
+    InterfaceInstanceResponse, InterfaceSpecResponse, InterfaceSpecSummary, ManualArtifactResponse,
+    MemoryClaimEvidence, MemoryClaimRecord, OobStartResponse, OobVerifyResponse, OperationResponse,
+    ReasoningOutputResponse, ReplayResponse, RequestAcceptedResponse, RequestEnvelope,
+    RequestStatusResponse, ReviewDecisionResponse, ReviewItemDetail, ReviewItemSummary,
+    SchemaEntryResponse, SearchDocumentHit, SyscallResponse, WedgeMetricsResponse,
+    WorkEpisodeDecision, WorkEpisodeResponse, WorkEpisodeTestResult, WorkflowInstanceResponse,
+    WorkflowSpecResponse, WorkflowSpecSummary, WorkspaceResolutionResponse,
 };
 use adesh_core::{
     StorageError,
@@ -21,10 +27,17 @@ use adesh_core::{
         validate_instance_against_schema,
     },
     ports::storage::{
-        ApprovalConsumeInput, ApprovalItemInput, AuditTraceRecord, CapabilityActivationReviewInput,
-        CapabilitySnapshotMintInput, CompiledSliceInput, GateDecisionInput, LeaseAcquisition,
-        OperationLease, ReasoningOutputInput, ReplayCreateInput, ReviewDecisionInput,
-        SchemaRegisterInput, StorageProvider, SyscallStatusUpdateInput,
+        ApprovalConsumeInput, ApprovalItemInput, ArtifactPutInput, AuditTraceRecord,
+        CapabilityActivationReviewInput, CapabilitySnapshotMintInput, CompiledSliceInput,
+        GateDecisionInput, IngestJobCreateInput, IngestJobItemUpsertInput,
+        IngestJobStatusUpdateInput, InterfaceInstanceCreateInput, InterfaceSpecQuery,
+        InterfaceSpecRegisterInput, LeaseAcquisition, ManualArtifactCreateInput, MemoryClaimQuery,
+        MemoryClaimUpsertInput, OobStartInput, OobVerifyInput, OperationLease,
+        ReasoningOutputInput, RecoverableOperationExecution, ReplayCreateInput,
+        ReviewDecisionInput, SchemaRegisterInput, SearchDocumentQuery, SearchDocumentUpsertInput,
+        StorageProvider, SyscallStatusUpdateInput, WorkEpisodeListQuery, WorkEpisodeStoreInput,
+        WorkflowInstanceCreateInput, WorkflowInstanceStateUpdateInput, WorkflowSpecQuery,
+        WorkflowSpecRegisterInput,
     },
 };
 
@@ -104,6 +117,31 @@ impl SqliteStorage {
         })
     }
 
+    fn aggregate_request_status(states: &[String]) -> String {
+        if states.is_empty() {
+            return "failed".to_string();
+        }
+        if states.iter().all(|state| state == "completed") {
+            return "completed".to_string();
+        }
+        if states.iter().any(|state| state == "running") {
+            return "running".to_string();
+        }
+        if states.iter().any(|state| state == "awaiting_approval") {
+            return "running".to_string();
+        }
+        if states.iter().any(|state| state == "created") {
+            return "running".to_string();
+        }
+        if states.iter().any(|state| state == "cancelled") {
+            return "cancelled".to_string();
+        }
+        if states.iter().any(|state| state == "blocked") {
+            return "blocked".to_string();
+        }
+        "failed".to_string()
+    }
+
     fn parse_timeline(raw: &str) -> Result<Vec<Value>, StorageError> {
         serde_json::from_str(raw).map_err(|err| StorageError::Corruption(err.to_string()))
     }
@@ -162,6 +200,296 @@ impl SqliteStorage {
                 .map_err(|err| StorageError::Corruption(err.to_string()))?,
             base_version: row.get("base_version"),
         })
+    }
+
+    fn parse_workflow_spec_summary(
+        row: sqlx::sqlite::SqliteRow,
+    ) -> Result<WorkflowSpecSummary, StorageError> {
+        Ok(WorkflowSpecSummary {
+            workflow_ref: row.get("workflow_ref"),
+            name: row.get("name"),
+            description: row.get("description"),
+            author: row.get("author"),
+            tags: serde_json::from_str(&row.get::<String, _>("tags_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            content_hash: row.get("content_hash"),
+            created_at: Self::parse_rfc3339(row.get::<String, _>("created_at").as_str())?,
+        })
+    }
+
+    fn parse_interface_spec_summary(
+        row: sqlx::sqlite::SqliteRow,
+    ) -> Result<InterfaceSpecSummary, StorageError> {
+        Ok(InterfaceSpecSummary {
+            interface_ref: row.get("interface_ref"),
+            name: row.get("name"),
+            description: row.get("description"),
+            author: row.get("author"),
+            tags: serde_json::from_str(&row.get::<String, _>("tags_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            content_hash: row.get("content_hash"),
+            created_at: Self::parse_rfc3339(row.get::<String, _>("created_at").as_str())?,
+        })
+    }
+
+    fn parse_ingest_job(row: sqlx::sqlite::SqliteRow) -> Result<IngestJobResponse, StorageError> {
+        let options = serde_json::from_str(&row.get::<String, _>("options_json"))
+            .map_err(|err| StorageError::Corruption(err.to_string()))?;
+        Ok(IngestJobResponse {
+            job_id: row.get("job_id"),
+            status: row.get("status"),
+            source_count: row.get("source_count"),
+            counters: IngestJobCountersResponse {
+                artifacts_total: row.get("artifacts_total"),
+                artifacts_succeeded: row.get("artifacts_succeeded"),
+                artifacts_failed: row.get("artifacts_failed"),
+                bytes_ingested: row.get("bytes_ingested"),
+            },
+            options,
+            error_summary: row.get("error_summary"),
+            created_at: Self::parse_rfc3339(row.get::<String, _>("created_at").as_str())?,
+            updated_at: Self::parse_rfc3339(row.get::<String, _>("updated_at").as_str())?,
+        })
+    }
+
+    fn parse_artifact(row: sqlx::sqlite::SqliteRow) -> Result<ArtifactResponse, StorageError> {
+        Ok(ArtifactResponse {
+            artifact_id: row.get("artifact_id"),
+            created_at: Self::parse_rfc3339(row.get::<String, _>("created_at").as_str())?,
+            ingest_job_id: row.get("ingest_job_id"),
+            kind: row.get("kind"),
+            content_ref: row.get("content_ref"),
+            parent_artifact_id: row.get("parent_artifact_id"),
+            dedupe_key: row.get("dedupe_key"),
+            meta: serde_json::from_str(&row.get::<String, _>("meta_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+        })
+    }
+
+    fn parse_work_episode(
+        row: sqlx::sqlite::SqliteRow,
+    ) -> Result<WorkEpisodeResponse, StorageError> {
+        Ok(WorkEpisodeResponse {
+            episode_id: row.get("episode_id"),
+            event_ref: row.get("event_ref"),
+            workspace: serde_json::from_str(&row.get::<String, _>("workspace_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            workspace_resolution: WorkspaceResolutionResponse {
+                resolved_scope_key: row.get("scope_key"),
+                scope_type: row.get("scope_type"),
+                resolution_basis: serde_json::from_str(
+                    &row.get::<String, _>("workspace_resolution_basis_json"),
+                )
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+                confidence: row.get("workspace_resolution_confidence"),
+            },
+            task_scope_key: row.get("task_scope_key"),
+            task_prompt: row.get("task_prompt"),
+            summary: row.get("summary"),
+            files_touched: serde_json::from_str(&row.get::<String, _>("files_touched_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            tests: serde_json::from_str::<Vec<WorkEpisodeTestResult>>(
+                &row.get::<String, _>("tests_json"),
+            )
+            .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            decisions: serde_json::from_str::<Vec<WorkEpisodeDecision>>(
+                &row.get::<String, _>("decisions_json"),
+            )
+            .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            unresolved_items: serde_json::from_str(&row.get::<String, _>("unresolved_items_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            observed_preferences: serde_json::from_str(
+                &row.get::<String, _>("observed_preferences_json"),
+            )
+            .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            risk_signals: serde_json::from_str(&row.get::<String, _>("risk_signals_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            issue_refs: serde_json::from_str(&row.get::<String, _>("issue_refs_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            artifact_refs: serde_json::from_str(&row.get::<String, _>("artifact_refs_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            started_at: Self::parse_rfc3339(row.get::<String, _>("started_at").as_str())?,
+            ended_at: Self::parse_rfc3339(row.get::<String, _>("ended_at").as_str())?,
+            created_at: Self::parse_rfc3339(row.get::<String, _>("created_at").as_str())?,
+        })
+    }
+
+    async fn load_claim_evidence(
+        &self,
+        claim_id: &str,
+    ) -> Result<Vec<MemoryClaimEvidence>, StorageError> {
+        let rows = sqlx::query(
+            "SELECT evidence_ref, evidence_kind, locator_json
+             FROM claim_evidence
+             WHERE claim_id = ?1
+             ORDER BY evidence_ref ASC",
+        )
+        .bind(claim_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        rows.into_iter()
+            .map(|row| {
+                Ok(MemoryClaimEvidence {
+                    evidence_ref: row.get("evidence_ref"),
+                    evidence_kind: row.get("evidence_kind"),
+                    locator: row
+                        .get::<Option<String>, _>("locator_json")
+                        .map(|value| serde_json::from_str(&value))
+                        .transpose()
+                        .map_err(|err| StorageError::Corruption(err.to_string()))?,
+                })
+            })
+            .collect()
+    }
+
+    async fn load_claim_record(&self, claim_id: &str) -> Result<MemoryClaimRecord, StorageError> {
+        let row = sqlx::query(
+            "SELECT claim_id, claim_type, claim_key, scope_type, scope_key, subject_key, status,
+                    created_at, updated_at, created_by, confidence, value_json,
+                    context_predicates_json, time_start, time_end, evidence_quality_json,
+                    promotion_ref
+             FROM claims
+             WHERE claim_id = ?1",
+        )
+        .bind(claim_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .ok_or_else(|| StorageError::NotFound(format!("claim {claim_id}")))?;
+
+        let evidence = self.load_claim_evidence(claim_id).await?;
+        Ok(MemoryClaimRecord {
+            claim_id: row.get("claim_id"),
+            claim_type: row.get("claim_type"),
+            claim_key: row.get("claim_key"),
+            scope_type: row.get("scope_type"),
+            scope_key: row.get("scope_key"),
+            subject_key: row.get("subject_key"),
+            status: row.get("status"),
+            created_at: Self::parse_rfc3339(row.get::<String, _>("created_at").as_str())?,
+            updated_at: Self::parse_rfc3339(row.get::<String, _>("updated_at").as_str())?,
+            created_by: row.get("created_by"),
+            confidence: row.get("confidence"),
+            value: serde_json::from_str(&row.get::<String, _>("value_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            context_predicates: serde_json::from_str(
+                &row.get::<String, _>("context_predicates_json"),
+            )
+            .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            time_start: row
+                .get::<Option<String>, _>("time_start")
+                .map(|value| Self::parse_rfc3339(&value))
+                .transpose()?,
+            time_end: row
+                .get::<Option<String>, _>("time_end")
+                .map(|value| Self::parse_rfc3339(&value))
+                .transpose()?,
+            evidence_quality: serde_json::from_str(&row.get::<String, _>("evidence_quality_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            promotion_ref: row.get("promotion_ref"),
+            evidence,
+        })
+    }
+
+    fn parse_search_document_hit(row: sqlx::sqlite::SqliteRow) -> SearchDocumentHit {
+        SearchDocumentHit {
+            doc_id: row.get("doc_id"),
+            scope_type: row.get("scope_type"),
+            scope_key: row.get("scope_key"),
+            source_type: row.get("source_type"),
+            source_ref: row.get("source_ref"),
+            title: row.get("title"),
+            body_text: row.get("body_text"),
+        }
+    }
+
+    fn parse_workflow_step_state(
+        row: sqlx::sqlite::SqliteRow,
+    ) -> Result<adesh_contracts::WorkflowStepStateResponse, StorageError> {
+        Ok(adesh_contracts::WorkflowStepStateResponse {
+            step_id: row.get("step_id"),
+            step_type: row.get("step_type"),
+            state: row.get("state"),
+            attempt: row.get("attempt"),
+            operation_id: row.get("operation_id"),
+            approval_id: row.get("approval_id"),
+            syscall_id: row.get("syscall_id"),
+            updated_at: Self::parse_rfc3339(row.get::<String, _>("updated_at").as_str())?,
+        })
+    }
+
+    fn parse_workflow_spec_steps(payload: &Value) -> Result<Vec<(String, String)>, StorageError> {
+        let root = payload.as_object().ok_or_else(|| {
+            StorageError::InvalidInput("workflow spec payload must be an object".to_string())
+        })?;
+        for field in ["steps", "edges", "entry_steps", "exit_steps"] {
+            if !root.contains_key(field) {
+                return Err(StorageError::InvalidInput(format!(
+                    "workflow spec missing required field `{field}`"
+                )));
+            }
+        }
+        let steps = root.get("steps").and_then(Value::as_array).ok_or_else(|| {
+            StorageError::InvalidInput("workflow spec `steps` must be an array".to_string())
+        })?;
+
+        let mut parsed = Vec::with_capacity(steps.len());
+        for step in steps {
+            let step_obj = step.as_object().ok_or_else(|| {
+                StorageError::InvalidInput("workflow step must be an object".to_string())
+            })?;
+            let step_id = step_obj
+                .get("step_id")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    StorageError::InvalidInput(
+                        "workflow step missing non-empty `step_id`".to_string(),
+                    )
+                })?;
+            let step_type = step_obj
+                .get("step_type")
+                .and_then(Value::as_str)
+                .filter(|value| {
+                    matches!(
+                        *value,
+                        "transform" | "model_call" | "syscall" | "subworkflow"
+                    )
+                })
+                .ok_or_else(|| {
+                    StorageError::InvalidInput(
+                        "workflow step missing supported `step_type`".to_string(),
+                    )
+                })?;
+            parsed.push((step_id.to_string(), step_type.to_string()));
+        }
+
+        Ok(parsed)
+    }
+
+    fn extract_interface_template(payload: &Value) -> Result<(Value, Value), StorageError> {
+        let root = payload.as_object().ok_or_else(|| {
+            StorageError::InvalidInput("interface spec payload must be an object".to_string())
+        })?;
+        let blocks = root.get("blocks").cloned().ok_or_else(|| {
+            StorageError::InvalidInput("interface spec missing `blocks`".to_string())
+        })?;
+        let bindings = root.get("bindings").cloned().ok_or_else(|| {
+            StorageError::InvalidInput("interface spec missing `bindings`".to_string())
+        })?;
+        if !blocks.is_array() {
+            return Err(StorageError::InvalidInput(
+                "interface spec `blocks` must be an array".to_string(),
+            ));
+        }
+        if !bindings.is_array() {
+            return Err(StorageError::InvalidInput(
+                "interface spec `bindings` must be an array".to_string(),
+            ));
+        }
+        Ok((blocks, bindings))
     }
 
     fn parse_rfc3339(ts: &str) -> Result<DateTime<Utc>, StorageError> {
@@ -310,6 +638,139 @@ impl SqliteStorage {
         }
 
         Ok(())
+    }
+
+    async fn get_workflow_instance_from_tx(
+        &self,
+        conn: &mut sqlx::SqliteConnection,
+        workflow_instance_id: &str,
+    ) -> Result<WorkflowInstanceResponse, StorageError> {
+        let row = sqlx::query(
+            "SELECT workflow_instance_id, workflow_ref, parent_request_id, parent_operation_id,
+                    created_at, updated_at, state, state_reason, pinned_active_state_version,
+                    pinned_capability_snapshot_version, pinned_audience_graph_version, inputs_json, outputs_json
+             FROM workflow_instances
+             WHERE workflow_instance_id = ?1",
+        )
+        .bind(workflow_instance_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .ok_or_else(|| StorageError::NotFound(format!("workflow instance {workflow_instance_id}")))?;
+
+        let step_rows = sqlx::query(
+            "SELECT workflow_instance_id, step_id, step_type, state, attempt, operation_id, approval_id, syscall_id, updated_at
+             FROM workflow_step_states
+             WHERE workflow_instance_id = ?1
+             ORDER BY step_id ASC",
+        )
+        .bind(workflow_instance_id)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let mut step_states = Vec::with_capacity(step_rows.len());
+        for step_row in step_rows {
+            step_states.push(Self::parse_workflow_step_state(step_row)?);
+        }
+
+        Ok(WorkflowInstanceResponse {
+            workflow_instance_id: row.get("workflow_instance_id"),
+            workflow_ref: row.get("workflow_ref"),
+            parent_request_id: row.get("parent_request_id"),
+            parent_operation_id: row.get("parent_operation_id"),
+            state: row.get("state"),
+            state_reason: row.get("state_reason"),
+            pinned_active_state_version: row.get("pinned_active_state_version"),
+            pinned_capability_snapshot_version: row.get("pinned_capability_snapshot_version"),
+            pinned_audience_graph_version: row.get("pinned_audience_graph_version"),
+            inputs: serde_json::from_str(&row.get::<String, _>("inputs_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            outputs: row
+                .get::<Option<String>, _>("outputs_json")
+                .map(|value| serde_json::from_str(&value))
+                .transpose()
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            step_states,
+            created_at: Self::parse_rfc3339(row.get::<String, _>("created_at").as_str())?,
+            updated_at: Self::parse_rfc3339(row.get::<String, _>("updated_at").as_str())?,
+        })
+    }
+
+    async fn get_workflow_instance_from_pool(
+        &self,
+        workflow_instance_id: &str,
+    ) -> Result<WorkflowInstanceResponse, StorageError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let response = self
+            .get_workflow_instance_from_tx(tx.as_mut(), workflow_instance_id)
+            .await?;
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(response)
+    }
+
+    async fn get_interface_instance_from_tx(
+        &self,
+        conn: &mut sqlx::SqliteConnection,
+        interface_instance_id: &str,
+    ) -> Result<InterfaceInstanceResponse, StorageError> {
+        let row = sqlx::query(
+            "SELECT interface_instance_id, interface_ref, operation_id, workflow_instance_id, created_at,
+                    viewer_audience_id, pinned_active_state_version, pinned_capability_snapshot_version,
+                    pinned_audience_graph_version, gate_summary_json, blocks_json, bindings_json,
+                    taint_summary_json, state
+             FROM interface_instances
+             WHERE interface_instance_id = ?1",
+        )
+        .bind(interface_instance_id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .ok_or_else(|| StorageError::NotFound(format!("interface instance {interface_instance_id}")))?;
+
+        Ok(InterfaceInstanceResponse {
+            interface_instance_id: row.get("interface_instance_id"),
+            interface_ref: row.get("interface_ref"),
+            operation_id: row.get("operation_id"),
+            workflow_instance_id: row.get("workflow_instance_id"),
+            viewer_audience_id: row.get("viewer_audience_id"),
+            pinned_active_state_version: row.get("pinned_active_state_version"),
+            pinned_capability_snapshot_version: row.get("pinned_capability_snapshot_version"),
+            pinned_audience_graph_version: row.get("pinned_audience_graph_version"),
+            gate_summary: serde_json::from_str(&row.get::<String, _>("gate_summary_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            blocks: serde_json::from_str(&row.get::<String, _>("blocks_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            bindings: serde_json::from_str(&row.get::<String, _>("bindings_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            taint_summary: serde_json::from_str(&row.get::<String, _>("taint_summary_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            state: row.get("state"),
+            created_at: Self::parse_rfc3339(row.get::<String, _>("created_at").as_str())?,
+        })
+    }
+
+    async fn get_interface_instance_from_pool(
+        &self,
+        interface_instance_id: &str,
+    ) -> Result<InterfaceInstanceResponse, StorageError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let response = self
+            .get_interface_instance_from_tx(tx.as_mut(), interface_instance_id)
+            .await?;
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(response)
     }
 }
 
@@ -527,6 +988,215 @@ impl StorageProvider for SqliteStorage {
             .bind(&response_json)
             .bind(&response_json)
             .bind(&now_rfc3339)
+            .bind(Option::<String>::None)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        Ok(response)
+    }
+
+    async fn get_request_status(
+        &self,
+        request_id: &str,
+    ) -> Result<RequestStatusResponse, StorageError> {
+        let rows = sqlx::query(
+            "SELECT operation_id, state
+             FROM operations
+             WHERE parent_request_id = ?1
+             ORDER BY created_at ASC",
+        )
+        .bind(request_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if rows.is_empty() {
+            return Err(StorageError::NotFound(format!("request {request_id}")));
+        }
+
+        let operation_ids = rows
+            .iter()
+            .map(|row| row.get::<String, _>("operation_id"))
+            .collect::<Vec<_>>();
+        let states = rows
+            .iter()
+            .map(|row| row.get::<String, _>("state"))
+            .collect::<Vec<_>>();
+
+        Ok(RequestStatusResponse {
+            request_id: request_id.to_string(),
+            operation_ids,
+            status: Self::aggregate_request_status(&states),
+        })
+    }
+
+    async fn cancel_operation(
+        &self,
+        operation_id: &str,
+        reason: Option<&str>,
+        idempotency_key: Option<String>,
+    ) -> Result<OperationResponse, StorageError> {
+        let endpoint_scope = format!("/v1/operations/{operation_id}/cancel");
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if let Some(key) = idempotency_key.as_deref() {
+            if let Some(existing) = sqlx::query_scalar::<_, String>(
+                "SELECT response_json FROM idempotency_keys WHERE endpoint_scope = ?1 AND idempotency_key = ?2",
+            )
+            .bind(&endpoint_scope)
+            .bind(key)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?
+            {
+                let parsed = serde_json::from_str::<OperationResponse>(&existing)
+                    .map_err(|err| StorageError::Corruption(err.to_string()))?;
+                tx.commit()
+                    .await
+                    .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+                return Ok(parsed);
+            }
+        }
+
+        let row = sqlx::query(
+            "SELECT o.operation_id, o.state, a.audit_trace_id
+             FROM operations o
+             INNER JOIN audit_traces a ON a.operation_id = o.operation_id
+             WHERE o.operation_id = ?1",
+        )
+        .bind(operation_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .ok_or_else(|| StorageError::NotFound(format!("operation {operation_id}")))?;
+
+        let current_state: String = row.get("state");
+        if matches!(
+            current_state.as_str(),
+            "completed" | "failed" | "blocked" | "cancelled"
+        ) {
+            return Err(StorageError::Conflict(format!(
+                "operation {operation_id} is already terminal"
+            )));
+        }
+        let audit_trace_id: String = row.get("audit_trace_id");
+        let now = Utc::now().to_rfc3339();
+        let cancel_reason = reason
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("cancelled_by_owner");
+
+        sqlx::query(
+            "UPDATE operations SET state = 'cancelled', state_reason = ?2, updated_at = ?3 WHERE operation_id = ?1",
+        )
+        .bind(operation_id)
+        .bind(cancel_reason)
+        .bind(&now)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        sqlx::query(
+            "INSERT INTO operation_transitions (
+                transition_id, operation_id, ts, from_state, to_state, reason, audit_trace_id
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )
+        .bind(format!("transition:{}", Uuid::new_v4()))
+        .bind(operation_id)
+        .bind(&now)
+        .bind(current_state)
+        .bind("cancelled")
+        .bind(cancel_reason)
+        .bind(&audit_trace_id)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let mut timeline = sqlx::query_scalar::<_, String>(
+            "SELECT timeline_json FROM audit_traces WHERE audit_trace_id = ?1",
+        )
+        .bind(&audit_trace_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .map(|value| Self::parse_timeline(&value))
+        .transpose()?
+        .ok_or_else(|| StorageError::Corruption(format!("missing audit trace {audit_trace_id}")))?;
+        timeline.push(json!({
+            "type": "operation_cancelled",
+            "ts": now,
+            "operation_id": operation_id,
+            "reason": cancel_reason,
+        }));
+
+        sqlx::query("UPDATE audit_traces SET timeline_json = ?2 WHERE audit_trace_id = ?1")
+            .bind(&audit_trace_id)
+            .bind(
+                serde_json::to_string(&timeline)
+                    .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+            )
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let operation = sqlx::query(
+            "SELECT o.operation_id, o.parent_request_id, o.isolation_id, o.state, o.state_reason,
+                    o.requesting_audience_id, o.pinned_active_state_version, o.pinned_capability_snapshot_version,
+                    o.pinned_audience_graph_version, o.budgets_json, o.operation_goal_json, o.created_at, o.updated_at,
+                    a.audit_trace_id
+             FROM operations o
+             INNER JOIN audit_traces a ON a.operation_id = o.operation_id
+             WHERE o.operation_id = ?1",
+        )
+        .bind(operation_id)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let response = OperationResponse {
+            operation_id: operation.get("operation_id"),
+            request_id: operation.get("parent_request_id"),
+            isolation_id: operation.get("isolation_id"),
+            state: operation.get("state"),
+            state_reason: operation.get("state_reason"),
+            requesting_audience_id: operation.get("requesting_audience_id"),
+            audit_trace_id: operation.get("audit_trace_id"),
+            pinned_active_state_version: operation.get("pinned_active_state_version"),
+            pinned_capability_snapshot_version: operation.get("pinned_capability_snapshot_version"),
+            pinned_audience_graph_version: operation.get("pinned_audience_graph_version"),
+            budgets: serde_json::from_str(&operation.get::<String, _>("budgets_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            operation_goal: serde_json::from_str(
+                &operation.get::<String, _>("operation_goal_json"),
+            )
+            .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            created_at: Self::parse_rfc3339(operation.get::<String, _>("created_at").as_str())?,
+            updated_at: Self::parse_rfc3339(operation.get::<String, _>("updated_at").as_str())?,
+        };
+
+        if let Some(key) = idempotency_key.as_deref() {
+            let response_json = serde_json::to_string(&response)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            sqlx::query(
+                "INSERT INTO idempotency_keys (
+                    endpoint_scope, idempotency_key, request_id, response_json, response_hash, created_at, expires_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .bind(&endpoint_scope)
+            .bind(key)
+            .bind(response.request_id.as_str())
+            .bind(&response_json)
+            .bind(&response_json)
+            .bind(&now)
             .bind(Option::<String>::None)
             .execute(tx.as_mut())
             .await
@@ -1774,6 +2444,236 @@ impl StorageProvider for SqliteStorage {
             .collect()
     }
 
+    async fn start_oob_challenge(
+        &self,
+        input: OobStartInput,
+    ) -> Result<OobStartResponse, StorageError> {
+        let endpoint_scope = format!("/v1/approvals/{}/oob/start", input.approval_id);
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = sqlx::query_scalar::<_, String>(
+                "SELECT response_json FROM idempotency_keys WHERE endpoint_scope = ?1 AND idempotency_key = ?2",
+            )
+            .bind(&endpoint_scope)
+            .bind(key)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?
+            {
+                let parsed = serde_json::from_str::<OobStartResponse>(&existing)
+                    .map_err(|err| StorageError::Corruption(err.to_string()))?;
+                tx.commit()
+                    .await
+                    .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+                return Ok(parsed);
+            }
+        }
+
+        let approval =
+            sqlx::query("SELECT approval_mode, status FROM approval_items WHERE approval_id = ?1")
+                .bind(&input.approval_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?
+                .ok_or_else(|| StorageError::NotFound(format!("approval {}", input.approval_id)))?;
+
+        let approval_status: String = approval.get("status");
+        if approval_status != "pending" {
+            return Err(StorageError::Conflict(format!(
+                "approval {} is not pending",
+                input.approval_id
+            )));
+        }
+        let approval_mode: String = approval.get("approval_mode");
+        if approval_mode != "oob_required" {
+            return Err(StorageError::InvalidInput(
+                "oob is only valid for oob_required approval mode".to_string(),
+            ));
+        }
+
+        let now = Utc::now();
+        let challenge_id = format!("challenge:{}", Uuid::new_v4());
+        let expires_at = now + Duration::minutes(5);
+        let now_rfc3339 = now.to_rfc3339();
+
+        sqlx::query(
+            "INSERT INTO oob_challenges (
+                challenge_id, approval_id, created_at, expires_at, status, verified_at, consumed_at, response_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )
+        .bind(&challenge_id)
+        .bind(&input.approval_id)
+        .bind(&now_rfc3339)
+        .bind(expires_at.to_rfc3339())
+        .bind("pending")
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .bind(Option::<String>::None)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Conflict(err.to_string()))?;
+
+        let response = OobStartResponse {
+            approval_id: input.approval_id,
+            challenge_id,
+            expires_at,
+        };
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            let response_json = serde_json::to_string(&response)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            sqlx::query(
+                "INSERT INTO idempotency_keys (
+                    endpoint_scope, idempotency_key, request_id, response_json, response_hash, created_at, expires_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .bind(&endpoint_scope)
+            .bind(key)
+            .bind(&response.challenge_id)
+            .bind(&response_json)
+            .bind(&response_json)
+            .bind(&now_rfc3339)
+            .bind(Option::<String>::None)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(response)
+    }
+
+    async fn verify_oob_challenge(
+        &self,
+        input: OobVerifyInput,
+    ) -> Result<OobVerifyResponse, StorageError> {
+        let endpoint_scope = format!("/v1/approvals/{}/oob/verify", input.approval_id);
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = sqlx::query_scalar::<_, String>(
+                "SELECT response_json FROM idempotency_keys WHERE endpoint_scope = ?1 AND idempotency_key = ?2",
+            )
+            .bind(&endpoint_scope)
+            .bind(key)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?
+            {
+                let parsed = serde_json::from_str::<OobVerifyResponse>(&existing)
+                    .map_err(|err| StorageError::Corruption(err.to_string()))?;
+                tx.commit()
+                    .await
+                    .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+                return Ok(parsed);
+            }
+        }
+
+        let now = Utc::now();
+        let now_rfc3339 = now.to_rfc3339();
+        let challenge = sqlx::query(
+            "SELECT approval_id, status, expires_at
+             FROM oob_challenges
+             WHERE challenge_id = ?1",
+        )
+        .bind(&input.challenge_id)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .ok_or_else(|| StorageError::NotFound(format!("oob challenge {}", input.challenge_id)))?;
+        let challenge_approval_id: String = challenge.get("approval_id");
+        if challenge_approval_id != input.approval_id {
+            return Err(StorageError::Conflict(format!(
+                "challenge {} does not belong to approval {}",
+                input.challenge_id, input.approval_id
+            )));
+        }
+
+        let status: String = challenge.get("status");
+        if status == "verified" || status == "consumed" {
+            let response = OobVerifyResponse {
+                approval_id: input.approval_id,
+                challenge_id: input.challenge_id,
+                status: "verified".to_string(),
+            };
+            tx.commit()
+                .await
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            return Ok(response);
+        }
+        if status != "pending" {
+            return Err(StorageError::Conflict(format!(
+                "challenge {} is not pending",
+                input.challenge_id
+            )));
+        }
+
+        let expires_at = Self::parse_rfc3339(challenge.get::<String, _>("expires_at").as_str())?;
+        if now > expires_at {
+            return Err(StorageError::Conflict(format!(
+                "challenge {} expired",
+                input.challenge_id
+            )));
+        }
+
+        sqlx::query(
+            "UPDATE oob_challenges
+             SET status = 'verified', verified_at = ?2, response_json = ?3
+             WHERE challenge_id = ?1",
+        )
+        .bind(&input.challenge_id)
+        .bind(&now_rfc3339)
+        .bind(
+            serde_json::to_string(&input.response_payload)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let response = OobVerifyResponse {
+            approval_id: input.approval_id,
+            challenge_id: input.challenge_id,
+            status: "verified".to_string(),
+        };
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            let response_json = serde_json::to_string(&response)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            sqlx::query(
+                "INSERT INTO idempotency_keys (
+                    endpoint_scope, idempotency_key, request_id, response_json, response_hash, created_at, expires_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .bind(&endpoint_scope)
+            .bind(key)
+            .bind(&response.challenge_id)
+            .bind(&response_json)
+            .bind(&response_json)
+            .bind(&now_rfc3339)
+            .bind(Option::<String>::None)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(response)
+    }
+
     async fn consume_approval_atomic(
         &self,
         input: ApprovalConsumeInput,
@@ -1846,6 +2746,57 @@ impl StorageProvider for SqliteStorage {
             return Err(StorageError::InvalidInput(
                 "oob challenge is not valid for non-oob approvals".to_string(),
             ));
+        }
+        if approval_mode == "oob_required" && input.decision == "approve" {
+            let challenge_id = input.oob_challenge_id.as_deref().ok_or_else(|| {
+                StorageError::InvalidInput("oob challenge_id is required".to_string())
+            })?;
+            let challenge = sqlx::query(
+                "SELECT approval_id, status, expires_at, consumed_at
+                 FROM oob_challenges
+                 WHERE challenge_id = ?1",
+            )
+            .bind(challenge_id)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?
+            .ok_or_else(|| StorageError::NotFound(format!("oob challenge {challenge_id}")))?;
+            let challenge_approval_id: String = challenge.get("approval_id");
+            if challenge_approval_id != input.approval_id {
+                return Err(StorageError::Conflict(format!(
+                    "oob challenge {challenge_id} does not match approval {}",
+                    input.approval_id
+                )));
+            }
+            let challenge_status: String = challenge.get("status");
+            if challenge_status != "verified" {
+                return Err(StorageError::Conflict(format!(
+                    "oob challenge {challenge_id} is not verified"
+                )));
+            }
+            if challenge.get::<Option<String>, _>("consumed_at").is_some() {
+                return Err(StorageError::Conflict(format!(
+                    "oob challenge {challenge_id} was already consumed"
+                )));
+            }
+            let expires_at =
+                Self::parse_rfc3339(challenge.get::<String, _>("expires_at").as_str())?;
+            if now > expires_at {
+                return Err(StorageError::Conflict(format!(
+                    "oob challenge {challenge_id} expired"
+                )));
+            }
+
+            sqlx::query(
+                "UPDATE oob_challenges
+                 SET status = 'consumed', consumed_at = ?2
+                 WHERE challenge_id = ?1 AND status = 'verified' AND consumed_at IS NULL",
+            )
+            .bind(challenge_id)
+            .bind(&now_rfc3339)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
         }
 
         let operation = sqlx::query(
@@ -2495,6 +3446,1773 @@ impl StorageProvider for SqliteStorage {
             .await
             .map_err(|err| StorageError::Unavailable(err.to_string()))?;
         Ok(response)
+    }
+
+    async fn create_manual_artifact(
+        &self,
+        input: ManualArtifactCreateInput,
+    ) -> Result<ManualArtifactResponse, StorageError> {
+        let endpoint_scope = "/v1/artifacts/manual";
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = sqlx::query_scalar::<_, String>(
+                "SELECT response_json FROM idempotency_keys WHERE endpoint_scope = ?1 AND idempotency_key = ?2",
+            )
+            .bind(endpoint_scope)
+            .bind(key)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?
+            {
+                let parsed = serde_json::from_str::<ManualArtifactResponse>(&existing)
+                    .map_err(|err| StorageError::Corruption(err.to_string()))?;
+                tx.commit()
+                    .await
+                    .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+                return Ok(parsed);
+            }
+        }
+
+        let bytes = BASE64_STANDARD
+            .decode(input.content_base64.as_bytes())
+            .map_err(|err| StorageError::InvalidInput(format!("invalid content_base64: {err}")))?;
+        let byte_size = i64::try_from(bytes.len())
+            .map_err(|_| StorageError::InvalidInput("artifact payload too large".to_string()))?;
+        let text_preview = String::from_utf8(bytes)
+            .ok()
+            .map(|value| value.chars().take(4_096).collect::<String>());
+        let artifact_id = format!("artifact:{}", Uuid::new_v4());
+        let now = Utc::now();
+        let now_rfc3339 = now.to_rfc3339();
+
+        sqlx::query(
+            "INSERT INTO manual_artifacts (
+                artifact_id, created_at, filename, media_type, content_base64, text_preview, byte_size, sensitivity_hint
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )
+        .bind(&artifact_id)
+        .bind(&now_rfc3339)
+        .bind(&input.filename)
+        .bind(&input.media_type)
+        .bind(&input.content_base64)
+        .bind(&text_preview)
+        .bind(byte_size)
+        .bind(input.sensitivity_hint.map(i64::from))
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Conflict(err.to_string()))?;
+
+        let response = ManualArtifactResponse {
+            artifact_id: artifact_id.clone(),
+            ref_id: artifact_id.clone(),
+            ref_type: "manual_artifact".to_string(),
+            filename: input.filename,
+            media_type: input.media_type,
+            byte_size,
+            sensitivity_hint: input.sensitivity_hint,
+            created_at: now,
+        };
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            let response_json = serde_json::to_string(&response)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            sqlx::query(
+                "INSERT INTO idempotency_keys (
+                    endpoint_scope, idempotency_key, request_id, response_json, response_hash, created_at, expires_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .bind(endpoint_scope)
+            .bind(key)
+            .bind(&response.artifact_id)
+            .bind(&response_json)
+            .bind(&response_json)
+            .bind(&now_rfc3339)
+            .bind(Option::<String>::None)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(response)
+    }
+
+    async fn get_manual_artifact_context(
+        &self,
+        ref_id: &str,
+        max_chars: usize,
+    ) -> Result<Option<String>, StorageError> {
+        let row = sqlx::query(
+            "SELECT filename, media_type, text_preview
+             FROM manual_artifacts
+             WHERE artifact_id = ?1",
+        )
+        .bind(ref_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let filename: String = row.get("filename");
+        let media_type: String = row.get("media_type");
+        let preview: Option<String> = row.get("text_preview");
+        let Some(preview) = preview else {
+            return Ok(None);
+        };
+
+        let clipped = preview.chars().take(max_chars).collect::<String>();
+        Ok(Some(format!(
+            "file={filename} media_type={media_type}\n{clipped}"
+        )))
+    }
+
+    async fn create_ingest_job(
+        &self,
+        input: IngestJobCreateInput,
+    ) -> Result<IngestJobResponse, StorageError> {
+        let endpoint_scope = "/v1/ingest/jobs";
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = sqlx::query_scalar::<_, String>(
+                "SELECT response_json FROM idempotency_keys WHERE endpoint_scope = ?1 AND idempotency_key = ?2",
+            )
+            .bind(endpoint_scope)
+            .bind(key)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?
+            {
+                let parsed = serde_json::from_str::<IngestJobResponse>(&existing)
+                    .map_err(|err| StorageError::Corruption(err.to_string()))?;
+                tx.commit()
+                    .await
+                    .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+                return Ok(parsed);
+            }
+        }
+
+        if input.sources.is_empty() {
+            return Err(StorageError::InvalidInput(
+                "ingest job requires at least one source".to_string(),
+            ));
+        }
+
+        let job_id = format!("ingest:{}", Uuid::new_v4());
+        let now = Utc::now();
+        let now_rfc3339 = now.to_rfc3339();
+        let options = json!({
+            "dedupe": input.options.dedupe,
+            "max_artifacts": input.options.max_artifacts,
+            "chunking": input.options.chunking,
+            "classification_mode": input.options.classification_mode,
+        });
+        let source_count = i64::try_from(input.sources.len())
+            .map_err(|_| StorageError::InvalidInput("too many ingest sources".to_string()))?;
+
+        sqlx::query(
+            "INSERT INTO ingest_jobs (
+                job_id, created_at, updated_at, status, source_count, artifacts_total,
+                artifacts_succeeded, artifacts_failed, bytes_ingested, options_json, error_summary
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        )
+        .bind(&job_id)
+        .bind(&now_rfc3339)
+        .bind(&now_rfc3339)
+        .bind("pending")
+        .bind(source_count)
+        .bind(0_i64)
+        .bind(0_i64)
+        .bind(0_i64)
+        .bind(0_i64)
+        .bind(
+            serde_json::to_string(&options)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .bind(Option::<String>::None)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Conflict(err.to_string()))?;
+
+        let event_ref = format!("event:ingest_job_created:{}", Uuid::new_v4());
+        let event_payload = json!({
+            "job_id": job_id,
+            "source_count": source_count,
+            "options": options.clone(),
+        });
+        sqlx::query(
+            "INSERT INTO experience_events (
+                event_ref, created_at, source_class, author, audience_id, sensitivity_s, taint_s,
+                kind, content_ref, json_payload
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        )
+        .bind(&event_ref)
+        .bind(&now_rfc3339)
+        .bind("control_plane")
+        .bind("root_owner")
+        .bind("root_owner")
+        .bind(0_i64)
+        .bind(0_i64)
+        .bind("ingest_job_created")
+        .bind(Option::<String>::None)
+        .bind(
+            serde_json::to_string(&event_payload)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        for (index, _) in input.sources.iter().enumerate() {
+            let item_key = format!("source:{index}");
+            sqlx::query(
+                "INSERT INTO ingest_job_items (
+                    job_id, item_key, status, artifact_id, error_json, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )
+            .bind(&job_id)
+            .bind(&item_key)
+            .bind("pending")
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .bind(&now_rfc3339)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        let response = IngestJobResponse {
+            job_id: job_id.clone(),
+            status: "pending".to_string(),
+            source_count,
+            counters: IngestJobCountersResponse {
+                artifacts_total: 0,
+                artifacts_succeeded: 0,
+                artifacts_failed: 0,
+                bytes_ingested: 0,
+            },
+            options,
+            error_summary: None,
+            created_at: now,
+            updated_at: now,
+        };
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            let response_json = serde_json::to_string(&response)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            sqlx::query(
+                "INSERT INTO idempotency_keys (
+                    endpoint_scope, idempotency_key, request_id, response_json, response_hash, created_at, expires_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .bind(endpoint_scope)
+            .bind(key)
+            .bind(&job_id)
+            .bind(&response_json)
+            .bind(&response_json)
+            .bind(&now_rfc3339)
+            .bind(Option::<String>::None)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(response)
+    }
+
+    async fn get_ingest_job(&self, job_id: &str) -> Result<IngestJobResponse, StorageError> {
+        let row = sqlx::query(
+            "SELECT job_id, created_at, updated_at, status, source_count, artifacts_total,
+                    artifacts_succeeded, artifacts_failed, bytes_ingested, options_json, error_summary
+             FROM ingest_jobs
+             WHERE job_id = ?1",
+        )
+        .bind(job_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .ok_or_else(|| StorageError::NotFound(format!("ingest job {job_id}")))?;
+
+        Self::parse_ingest_job(row)
+    }
+
+    async fn update_ingest_job_status(
+        &self,
+        input: IngestJobStatusUpdateInput,
+    ) -> Result<IngestJobResponse, StorageError> {
+        let now = Utc::now().to_rfc3339();
+        let rows = sqlx::query(
+            "UPDATE ingest_jobs
+             SET updated_at = ?2,
+                 status = ?3,
+                 artifacts_total = ?4,
+                 artifacts_succeeded = ?5,
+                 artifacts_failed = ?6,
+                 bytes_ingested = ?7,
+                 error_summary = ?8
+             WHERE job_id = ?1",
+        )
+        .bind(&input.job_id)
+        .bind(&now)
+        .bind(&input.status)
+        .bind(input.artifacts_total)
+        .bind(input.artifacts_succeeded)
+        .bind(input.artifacts_failed)
+        .bind(input.bytes_ingested)
+        .bind(&input.error_summary)
+        .execute(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .rows_affected();
+
+        if rows == 0 {
+            return Err(StorageError::NotFound(format!(
+                "ingest job {}",
+                input.job_id
+            )));
+        }
+
+        self.get_ingest_job(&input.job_id).await
+    }
+
+    async fn upsert_ingest_job_item(
+        &self,
+        input: IngestJobItemUpsertInput,
+    ) -> Result<(), StorageError> {
+        let now = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO ingest_job_items (
+                job_id, item_key, status, artifact_id, error_json, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(job_id, item_key) DO UPDATE SET
+                status = excluded.status,
+                artifact_id = excluded.artifact_id,
+                error_json = excluded.error_json,
+                updated_at = excluded.updated_at",
+        )
+        .bind(&input.job_id)
+        .bind(&input.item_key)
+        .bind(&input.status)
+        .bind(&input.artifact_id)
+        .bind(
+            input
+                .error_json
+                .as_ref()
+                .map(serde_json::to_string)
+                .transpose()
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(())
+    }
+
+    async fn put_artifact(
+        &self,
+        input: ArtifactPutInput,
+    ) -> Result<ArtifactResponse, StorageError> {
+        let now = Utc::now().to_rfc3339();
+        let meta_json = serde_json::to_string(&input.meta)
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        sqlx::query(
+            "INSERT INTO artifacts (
+                artifact_id, created_at, ingest_job_id, kind, content_ref, parent_artifact_id, dedupe_key, meta_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )
+        .bind(&input.artifact_id)
+        .bind(&now)
+        .bind(&input.ingest_job_id)
+        .bind(&input.kind)
+        .bind(&input.content_ref)
+        .bind(&input.parent_artifact_id)
+        .bind(&input.dedupe_key)
+        .bind(&meta_json)
+        .execute(&self.pool)
+        .await
+        .map_err(|err| StorageError::Conflict(err.to_string()))?;
+
+        self.get_artifact(&input.artifact_id).await
+    }
+
+    async fn get_artifact(&self, artifact_id: &str) -> Result<ArtifactResponse, StorageError> {
+        let row = sqlx::query(
+            "SELECT artifact_id, created_at, ingest_job_id, kind, content_ref, parent_artifact_id, dedupe_key, meta_json
+             FROM artifacts
+             WHERE artifact_id = ?1",
+        )
+        .bind(artifact_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .ok_or_else(|| StorageError::NotFound(format!("artifact {artifact_id}")))?;
+        Self::parse_artifact(row)
+    }
+
+    async fn list_artifacts_by_job(
+        &self,
+        job_id: &str,
+    ) -> Result<Vec<ArtifactResponse>, StorageError> {
+        let rows = sqlx::query(
+            "SELECT artifact_id, created_at, ingest_job_id, kind, content_ref, parent_artifact_id, dedupe_key, meta_json
+             FROM artifacts
+             WHERE ingest_job_id = ?1
+             ORDER BY created_at ASC, artifact_id ASC",
+        )
+        .bind(job_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        rows.into_iter().map(Self::parse_artifact).collect()
+    }
+
+    async fn store_work_episode(
+        &self,
+        input: WorkEpisodeStoreInput,
+    ) -> Result<WorkEpisodeResponse, StorageError> {
+        let episode_id = format!("episode:{}", Uuid::new_v4());
+        let event_ref = format!("event:work_episode:{}", Uuid::new_v4());
+        let created_at = Utc::now();
+        let created_at_rfc3339 = created_at.to_rfc3339();
+        let workspace_json = serde_json::to_string(&input.workspace)
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let resolution_basis_json =
+            serde_json::to_string(&input.workspace_resolution.resolution_basis)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let files_touched_json = serde_json::to_string(&input.files_touched)
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let decisions_json = serde_json::to_string(
+            &input
+                .decisions
+                .iter()
+                .map(|item| WorkEpisodeDecision {
+                    decision: item.decision.clone(),
+                    rationale: item.rationale.clone(),
+                })
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let unresolved_items_json = serde_json::to_string(&input.unresolved_items)
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let tests_json = serde_json::to_string(
+            &input
+                .tests
+                .iter()
+                .map(|item| WorkEpisodeTestResult {
+                    name: item.name.clone(),
+                    status: item.status.clone(),
+                    summary: item.summary.clone(),
+                })
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let observed_preferences_json = serde_json::to_string(&input.observed_preferences)
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let risk_signals_json = serde_json::to_string(&input.risk_signals)
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let issue_refs_json = serde_json::to_string(&input.issue_refs)
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let artifact_refs_json = serde_json::to_string(&input.artifact_refs)
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        sqlx::query(
+            "INSERT INTO episodes (
+                episode_id, event_ref, scope_type, scope_key, task_scope_key, workspace_json,
+                workspace_resolution_basis_json, workspace_resolution_confidence, branch,
+                task_prompt, summary, files_touched_json, decisions_json,
+                unresolved_items_json, tests_json, observed_preferences_json,
+                risk_signals_json, issue_refs_json, artifact_refs_json, started_at, ended_at,
+                created_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+        )
+        .bind(&episode_id)
+        .bind(&event_ref)
+        .bind(&input.workspace_resolution.scope_type)
+        .bind(&input.workspace_resolution.resolved_scope_key)
+        .bind(&input.task_scope_key)
+        .bind(&workspace_json)
+        .bind(&resolution_basis_json)
+        .bind(input.workspace_resolution.confidence)
+        .bind(input.workspace.branch.clone())
+        .bind(&input.task_prompt)
+        .bind(&input.summary)
+        .bind(&files_touched_json)
+        .bind(&decisions_json)
+        .bind(&unresolved_items_json)
+        .bind(&tests_json)
+        .bind(&observed_preferences_json)
+        .bind(&risk_signals_json)
+        .bind(&issue_refs_json)
+        .bind(&artifact_refs_json)
+        .bind(input.started_at.to_rfc3339())
+        .bind(input.ended_at.to_rfc3339())
+        .bind(&created_at_rfc3339)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Conflict(err.to_string()))?;
+
+        for artifact_ref in &input.artifact_refs {
+            sqlx::query("INSERT INTO episode_artifacts (episode_id, artifact_ref) VALUES (?1, ?2)")
+                .bind(&episode_id)
+                .bind(artifact_ref)
+                .execute(tx.as_mut())
+                .await
+                .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        let event_payload = json!({
+            "episode_id": episode_id,
+            "scope_type": input.workspace_resolution.scope_type,
+            "scope_key": input.workspace_resolution.resolved_scope_key,
+            "task_scope_key": input.task_scope_key,
+            "task_prompt": input.task_prompt,
+            "summary": input.summary,
+            "files_touched": input.files_touched,
+            "issue_refs": input.issue_refs,
+        });
+        sqlx::query(
+            "INSERT INTO experience_events (
+                event_ref, created_at, source_class, author, audience_id, sensitivity_s, taint_s,
+                kind, content_ref, json_payload
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        )
+        .bind(&event_ref)
+        .bind(&created_at_rfc3339)
+        .bind("cognition")
+        .bind("owner")
+        .bind("root_owner")
+        .bind(0_i64)
+        .bind(0_i64)
+        .bind("work_episode")
+        .bind(Option::<String>::None)
+        .bind(
+            serde_json::to_string(&event_payload)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let search_body = format!(
+            "{}\n{}\n{}\n{}\n{}\n{}",
+            input.task_prompt,
+            input.summary,
+            input.files_touched.join(" "),
+            input
+                .decisions
+                .iter()
+                .map(|item| item.decision.as_str())
+                .collect::<Vec<_>>()
+                .join(" "),
+            input.unresolved_items.join(" "),
+            input.observed_preferences.join(" "),
+        );
+        sqlx::query(
+            "INSERT INTO search_documents (
+                doc_id, scope_type, scope_key, source_type, source_ref, title, body_text, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )
+        .bind(format!("doc:episode:{episode_id}"))
+        .bind(&input.workspace_resolution.scope_type)
+        .bind(&input.workspace_resolution.resolved_scope_key)
+        .bind("episode")
+        .bind(&episode_id)
+        .bind(&input.task_prompt)
+        .bind(search_body)
+        .bind(&created_at_rfc3339)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Conflict(err.to_string()))?;
+
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let row = sqlx::query(
+            "SELECT episode_id, event_ref, scope_type, scope_key, task_scope_key, workspace_json,
+                    workspace_resolution_basis_json, workspace_resolution_confidence, branch,
+                    task_prompt, summary, files_touched_json, decisions_json,
+                    unresolved_items_json, tests_json, observed_preferences_json,
+                    risk_signals_json, issue_refs_json, artifact_refs_json, started_at, ended_at,
+                    created_at
+             FROM episodes
+             WHERE episode_id = ?1",
+        )
+        .bind(&episode_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        Self::parse_work_episode(row)
+    }
+
+    async fn list_work_episodes(
+        &self,
+        query: WorkEpisodeListQuery,
+    ) -> Result<Vec<WorkEpisodeResponse>, StorageError> {
+        let limit = i64::from(query.limit.unwrap_or(20));
+        let rows = sqlx::query(
+            "SELECT episode_id, event_ref, scope_type, scope_key, task_scope_key, workspace_json,
+                    workspace_resolution_basis_json, workspace_resolution_confidence, branch,
+                    task_prompt, summary, files_touched_json, decisions_json,
+                    unresolved_items_json, tests_json, observed_preferences_json,
+                    risk_signals_json, issue_refs_json, artifact_refs_json, started_at, ended_at,
+                    created_at
+             FROM episodes
+             WHERE (?1 IS NULL OR scope_type = ?1)
+               AND (?2 IS NULL OR scope_key = ?2)
+               AND (?3 IS NULL OR task_scope_key = ?3)
+             ORDER BY ended_at DESC, created_at DESC
+             LIMIT ?4",
+        )
+        .bind(query.scope_type)
+        .bind(query.scope_key)
+        .bind(query.task_scope_key)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        rows.into_iter().map(Self::parse_work_episode).collect()
+    }
+
+    async fn upsert_memory_claim(
+        &self,
+        input: MemoryClaimUpsertInput,
+    ) -> Result<MemoryClaimRecord, StorageError> {
+        let claim_id = input
+            .claim_id
+            .unwrap_or_else(|| format!("claim:{}", Uuid::new_v4()));
+        let now = Utc::now().to_rfc3339();
+
+        sqlx::query(
+            "INSERT INTO claims (
+                claim_id, claim_type, claim_key, scope_type, scope_key, subject_key, status,
+                created_at, updated_at, created_by, confidence, value_json,
+                context_predicates_json, time_start, time_end, evidence_quality_json,
+                promotion_ref
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
+             ON CONFLICT(claim_id) DO UPDATE SET
+                claim_type = excluded.claim_type,
+                claim_key = excluded.claim_key,
+                scope_type = excluded.scope_type,
+                scope_key = excluded.scope_key,
+                subject_key = excluded.subject_key,
+                status = excluded.status,
+                updated_at = excluded.updated_at,
+                created_by = excluded.created_by,
+                confidence = excluded.confidence,
+                value_json = excluded.value_json,
+                context_predicates_json = excluded.context_predicates_json,
+                time_start = excluded.time_start,
+                time_end = excluded.time_end,
+                evidence_quality_json = excluded.evidence_quality_json,
+                promotion_ref = excluded.promotion_ref",
+        )
+        .bind(&claim_id)
+        .bind(&input.claim_type)
+        .bind(&input.claim_key)
+        .bind(&input.scope_type)
+        .bind(&input.scope_key)
+        .bind(&input.subject_key)
+        .bind(&input.status)
+        .bind(&now)
+        .bind(&input.created_by)
+        .bind(input.confidence)
+        .bind(
+            serde_json::to_string(&input.value_json)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .bind(
+            serde_json::to_string(&input.context_predicates_json)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .bind(input.time_start.map(|value| value.to_rfc3339()))
+        .bind(input.time_end.map(|value| value.to_rfc3339()))
+        .bind(
+            serde_json::to_string(&input.evidence_quality_json)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .bind(&input.promotion_ref)
+        .execute(&self.pool)
+        .await
+        .map_err(|err| StorageError::Conflict(err.to_string()))?;
+
+        sqlx::query("DELETE FROM claim_evidence WHERE claim_id = ?1")
+            .bind(&claim_id)
+            .execute(&self.pool)
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        for evidence in input.evidence {
+            sqlx::query(
+                "INSERT INTO claim_evidence (
+                    claim_id, evidence_ref, evidence_kind, locator_json
+                 ) VALUES (?1, ?2, ?3, ?4)",
+            )
+            .bind(&claim_id)
+            .bind(&evidence.evidence_ref)
+            .bind(&evidence.evidence_kind)
+            .bind(
+                evidence
+                    .locator_json
+                    .as_ref()
+                    .map(serde_json::to_string)
+                    .transpose()
+                    .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+            )
+            .execute(&self.pool)
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        self.load_claim_record(&claim_id).await
+    }
+
+    async fn list_memory_claims(
+        &self,
+        query: MemoryClaimQuery,
+    ) -> Result<Vec<MemoryClaimRecord>, StorageError> {
+        let limit = i64::from(query.limit.unwrap_or(50));
+        let rows = sqlx::query(
+            "SELECT claim_id
+             FROM claims
+             WHERE (?1 IS NULL OR scope_type = ?1)
+               AND (?2 IS NULL OR scope_key = ?2)
+             ORDER BY updated_at DESC, created_at DESC
+             LIMIT ?3",
+        )
+        .bind(query.scope_type)
+        .bind(query.scope_key)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let mut claims = Vec::new();
+        for row in rows {
+            let claim = self
+                .load_claim_record(row.get::<String, _>("claim_id").as_str())
+                .await?;
+            if !query.statuses.is_empty()
+                && !query.statuses.iter().any(|value| value == &claim.status)
+            {
+                continue;
+            }
+            if !query.claim_types.is_empty()
+                && !query
+                    .claim_types
+                    .iter()
+                    .any(|value| value == &claim.claim_type)
+            {
+                continue;
+            }
+            claims.push(claim);
+        }
+
+        Ok(claims)
+    }
+
+    async fn upsert_search_document(
+        &self,
+        input: SearchDocumentUpsertInput,
+    ) -> Result<(), StorageError> {
+        let updated_at = Utc::now().to_rfc3339();
+        sqlx::query(
+            "INSERT INTO search_documents (
+                doc_id, scope_type, scope_key, source_type, source_ref, title, body_text, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(doc_id) DO UPDATE SET
+                scope_type = excluded.scope_type,
+                scope_key = excluded.scope_key,
+                source_type = excluded.source_type,
+                source_ref = excluded.source_ref,
+                title = excluded.title,
+                body_text = excluded.body_text,
+                updated_at = excluded.updated_at",
+        )
+        .bind(&input.doc_id)
+        .bind(&input.scope_type)
+        .bind(&input.scope_key)
+        .bind(&input.source_type)
+        .bind(&input.source_ref)
+        .bind(&input.title)
+        .bind(&input.body_text)
+        .bind(&updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        Ok(())
+    }
+
+    async fn search_documents(
+        &self,
+        query: SearchDocumentQuery,
+    ) -> Result<Vec<SearchDocumentHit>, StorageError> {
+        let like_pattern = format!("%{}%", query.query_text.to_lowercase());
+        let rows = sqlx::query(
+            "SELECT doc_id, scope_type, scope_key, source_type, source_ref, title, body_text
+             FROM search_documents
+             WHERE scope_type = ?1
+               AND scope_key = ?2
+               AND lower(body_text) LIKE ?3
+             ORDER BY updated_at DESC
+             LIMIT ?4",
+        )
+        .bind(&query.scope_type)
+        .bind(&query.scope_key)
+        .bind(&like_pattern)
+        .bind(i64::from(query.limit))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(Self::parse_search_document_hit)
+            .collect())
+    }
+
+    async fn register_workflow_spec(
+        &self,
+        input: WorkflowSpecRegisterInput,
+    ) -> Result<WorkflowSpecResponse, StorageError> {
+        let endpoint_scope = "/v1/workflow-specs";
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = sqlx::query_scalar::<_, String>(
+                "SELECT response_json FROM idempotency_keys WHERE endpoint_scope = ?1 AND idempotency_key = ?2",
+            )
+            .bind(endpoint_scope)
+            .bind(key)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?
+            {
+                let parsed = serde_json::from_str::<WorkflowSpecResponse>(&existing)
+                    .map_err(|err| StorageError::Corruption(err.to_string()))?;
+                tx.commit()
+                    .await
+                    .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+                return Ok(parsed);
+            }
+        }
+
+        Self::parse_workflow_spec_steps(&input.spec_payload)?;
+
+        let canonical_payload = Self::canonical_json_string(&input.spec_payload)?;
+        let content_hash = Self::sha256_hex(&canonical_payload);
+        let workflow_ref = format!("workflow:sha256:{content_hash}");
+        let now = Utc::now();
+        let now_rfc3339 = now.to_rfc3339();
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO workflow_specs (
+                workflow_ref, created_at, name, description, author, tags_json, content_hash, payload_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )
+        .bind(&workflow_ref)
+        .bind(&now_rfc3339)
+        .bind(&input.name)
+        .bind(&input.description)
+        .bind("root_owner")
+        .bind(
+            serde_json::to_string(&input.tags)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .bind(&content_hash)
+        .bind(&canonical_payload)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Conflict(err.to_string()))?;
+
+        let row = sqlx::query(
+            "SELECT workflow_ref, created_at, name, description, author, tags_json, content_hash, payload_json
+             FROM workflow_specs
+             WHERE workflow_ref = ?1",
+        )
+        .bind(&workflow_ref)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let response = WorkflowSpecResponse {
+            workflow_ref: row.get("workflow_ref"),
+            name: row.get("name"),
+            description: row.get("description"),
+            author: row.get("author"),
+            tags: serde_json::from_str(&row.get::<String, _>("tags_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            content_hash: row.get("content_hash"),
+            created_at: Self::parse_rfc3339(row.get::<String, _>("created_at").as_str())?,
+            payload: serde_json::from_str(&row.get::<String, _>("payload_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+        };
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            let response_json = serde_json::to_string(&response)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            sqlx::query(
+                "INSERT INTO idempotency_keys (
+                    endpoint_scope, idempotency_key, request_id, response_json, response_hash, created_at, expires_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .bind(endpoint_scope)
+            .bind(key)
+            .bind(&response.workflow_ref)
+            .bind(&response_json)
+            .bind(&response_json)
+            .bind(&now_rfc3339)
+            .bind(Option::<String>::None)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(response)
+    }
+
+    async fn get_workflow_spec(
+        &self,
+        workflow_ref: &str,
+    ) -> Result<WorkflowSpecResponse, StorageError> {
+        let row = sqlx::query(
+            "SELECT workflow_ref, created_at, name, description, author, tags_json, content_hash, payload_json
+             FROM workflow_specs
+             WHERE workflow_ref = ?1",
+        )
+        .bind(workflow_ref)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .ok_or_else(|| StorageError::NotFound(format!("workflow spec {workflow_ref}")))?;
+
+        Ok(WorkflowSpecResponse {
+            workflow_ref: row.get("workflow_ref"),
+            name: row.get("name"),
+            description: row.get("description"),
+            author: row.get("author"),
+            tags: serde_json::from_str(&row.get::<String, _>("tags_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            content_hash: row.get("content_hash"),
+            created_at: Self::parse_rfc3339(row.get::<String, _>("created_at").as_str())?,
+            payload: serde_json::from_str(&row.get::<String, _>("payload_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+        })
+    }
+
+    async fn find_workflow_specs(
+        &self,
+        query: WorkflowSpecQuery,
+    ) -> Result<Vec<WorkflowSpecSummary>, StorageError> {
+        let rows = sqlx::query(
+            "SELECT workflow_ref, created_at, name, description, author, tags_json, content_hash
+             FROM workflow_specs
+             ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let mut items = Vec::new();
+        for row in rows {
+            let item = Self::parse_workflow_spec_summary(row)?;
+            if let Some(name) = query.name.as_deref() {
+                if item.name != name {
+                    continue;
+                }
+            }
+            if let Some(author) = query.author.as_deref() {
+                if item.author != author {
+                    continue;
+                }
+            }
+            if let Some(tag) = query.tag.as_deref() {
+                if !item.tags.iter().any(|value| value == tag) {
+                    continue;
+                }
+            }
+            items.push(item);
+            if let Some(limit) = query.limit {
+                if items.len() >= limit as usize {
+                    break;
+                }
+            }
+        }
+        Ok(items)
+    }
+
+    async fn create_workflow_instance(
+        &self,
+        input: WorkflowInstanceCreateInput,
+    ) -> Result<WorkflowInstanceResponse, StorageError> {
+        let endpoint_scope = "/v1/workflow-instances";
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = sqlx::query_scalar::<_, String>(
+                "SELECT response_json FROM idempotency_keys WHERE endpoint_scope = ?1 AND idempotency_key = ?2",
+            )
+            .bind(endpoint_scope)
+            .bind(key)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?
+            {
+                let parsed = serde_json::from_str::<WorkflowInstanceResponse>(&existing)
+                    .map_err(|err| StorageError::Corruption(err.to_string()))?;
+                tx.commit()
+                    .await
+                    .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+                return Ok(parsed);
+            }
+        }
+
+        let workflow_spec_payload = sqlx::query_scalar::<_, String>(
+            "SELECT payload_json FROM workflow_specs WHERE workflow_ref = ?1",
+        )
+        .bind(&input.workflow_ref)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .ok_or_else(|| StorageError::NotFound(format!("workflow spec {}", input.workflow_ref)))?;
+        let workflow_spec_payload: Value = serde_json::from_str(&workflow_spec_payload)
+            .map_err(|err| StorageError::Corruption(err.to_string()))?;
+        let steps = Self::parse_workflow_spec_steps(&workflow_spec_payload)?;
+
+        let (active_state_version, audience_graph_version, capability_snapshot_version) =
+            self.load_current_versions(&mut tx).await?;
+
+        let workflow_instance_id = format!("workflow:{}", Uuid::new_v4());
+        let now = Utc::now();
+        let now_rfc3339 = now.to_rfc3339();
+
+        sqlx::query(
+            "INSERT INTO workflow_instances (
+                workflow_instance_id, workflow_ref, parent_request_id, parent_operation_id, created_at, updated_at,
+                state, state_reason, pinned_active_state_version, pinned_capability_snapshot_version,
+                pinned_audience_graph_version, inputs_json, outputs_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        )
+        .bind(&workflow_instance_id)
+        .bind(&input.workflow_ref)
+        .bind(&input.parent_request_id)
+        .bind(&input.parent_operation_id)
+        .bind(&now_rfc3339)
+        .bind("created")
+        .bind(Option::<String>::None)
+        .bind(&active_state_version)
+        .bind(&capability_snapshot_version)
+        .bind(&audience_graph_version)
+        .bind(
+            serde_json::to_string(&input.inputs)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .bind(Option::<String>::None)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Conflict(err.to_string()))?;
+
+        sqlx::query(
+            "INSERT INTO workflow_instance_transitions (
+                transition_id, workflow_instance_id, ts, from_state, to_state, reason
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
+        .bind(format!("workflow-transition:{}", Uuid::new_v4()))
+        .bind(&workflow_instance_id)
+        .bind(&now_rfc3339)
+        .bind(Option::<String>::None)
+        .bind("created")
+        .bind(Option::<String>::None)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        for (step_id, step_type) in steps {
+            sqlx::query(
+                "INSERT INTO workflow_step_states (
+                    workflow_instance_id, step_id, step_type, state, attempt, operation_id, approval_id, syscall_id, updated_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )
+            .bind(&workflow_instance_id)
+            .bind(&step_id)
+            .bind(&step_type)
+            .bind("pending")
+            .bind(0_i64)
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .bind(&now_rfc3339)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+
+            sqlx::query(
+                "INSERT INTO workflow_step_transitions (
+                    transition_id, workflow_instance_id, step_id, ts, from_state, to_state, reason, linked_operation_id, linked_approval_id, linked_syscall_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )
+            .bind(format!("workflow-step-transition:{}", Uuid::new_v4()))
+            .bind(&workflow_instance_id)
+            .bind(&step_id)
+            .bind(&now_rfc3339)
+            .bind(Option::<String>::None)
+            .bind("pending")
+            .bind("instance_created")
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .bind(Option::<String>::None)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        }
+
+        let response = self
+            .get_workflow_instance_from_tx(tx.as_mut(), &workflow_instance_id)
+            .await?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            let response_json = serde_json::to_string(&response)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            sqlx::query(
+                "INSERT INTO idempotency_keys (
+                    endpoint_scope, idempotency_key, request_id, response_json, response_hash, created_at, expires_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .bind(endpoint_scope)
+            .bind(key)
+            .bind(&response.workflow_instance_id)
+            .bind(&response_json)
+            .bind(&response_json)
+            .bind(&now_rfc3339)
+            .bind(Option::<String>::None)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(response)
+    }
+
+    async fn get_workflow_instance(
+        &self,
+        workflow_instance_id: &str,
+    ) -> Result<WorkflowInstanceResponse, StorageError> {
+        self.get_workflow_instance_from_pool(workflow_instance_id)
+            .await
+    }
+
+    async fn update_workflow_instance_state(
+        &self,
+        input: WorkflowInstanceStateUpdateInput,
+    ) -> Result<WorkflowInstanceResponse, StorageError> {
+        let endpoint_scope = format!(
+            "/v1/workflow-instances/{}/cancel",
+            input.workflow_instance_id
+        );
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = sqlx::query_scalar::<_, String>(
+                "SELECT response_json FROM idempotency_keys WHERE endpoint_scope = ?1 AND idempotency_key = ?2",
+            )
+            .bind(&endpoint_scope)
+            .bind(key)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?
+            {
+                let parsed = serde_json::from_str::<WorkflowInstanceResponse>(&existing)
+                    .map_err(|err| StorageError::Corruption(err.to_string()))?;
+                tx.commit()
+                    .await
+                    .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+                return Ok(parsed);
+            }
+        }
+
+        let current =
+            sqlx::query("SELECT state FROM workflow_instances WHERE workflow_instance_id = ?1")
+                .bind(&input.workflow_instance_id)
+                .fetch_optional(tx.as_mut())
+                .await
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?
+                .ok_or_else(|| {
+                    StorageError::NotFound(format!(
+                        "workflow instance {}",
+                        input.workflow_instance_id
+                    ))
+                })?;
+        let current_state: String = current.get("state");
+        if let Some(expected_state) = input.expected_state.as_deref() {
+            if current_state != expected_state {
+                return Err(StorageError::Conflict(format!(
+                    "workflow instance {} is in state {}, expected {}",
+                    input.workflow_instance_id, current_state, expected_state
+                )));
+            }
+        }
+        if matches!(current_state.as_str(), "completed" | "failed" | "cancelled") {
+            return Err(StorageError::Conflict(format!(
+                "workflow instance {} is already terminal",
+                input.workflow_instance_id
+            )));
+        }
+
+        let now = Utc::now();
+        let now_rfc3339 = now.to_rfc3339();
+
+        sqlx::query(
+            "UPDATE workflow_instances
+             SET state = ?2, state_reason = ?3, updated_at = ?4
+             WHERE workflow_instance_id = ?1",
+        )
+        .bind(&input.workflow_instance_id)
+        .bind(&input.new_state)
+        .bind(&input.reason)
+        .bind(&now_rfc3339)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        sqlx::query(
+            "INSERT INTO workflow_instance_transitions (
+                transition_id, workflow_instance_id, ts, from_state, to_state, reason
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
+        .bind(format!("workflow-transition:{}", Uuid::new_v4()))
+        .bind(&input.workflow_instance_id)
+        .bind(&now_rfc3339)
+        .bind(&current_state)
+        .bind(&input.new_state)
+        .bind(&input.reason)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let response = self
+            .get_workflow_instance_from_tx(tx.as_mut(), &input.workflow_instance_id)
+            .await?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            let response_json = serde_json::to_string(&response)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            sqlx::query(
+                "INSERT INTO idempotency_keys (
+                    endpoint_scope, idempotency_key, request_id, response_json, response_hash, created_at, expires_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .bind(&endpoint_scope)
+            .bind(key)
+            .bind(&response.workflow_instance_id)
+            .bind(&response_json)
+            .bind(&response_json)
+            .bind(&now_rfc3339)
+            .bind(Option::<String>::None)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(response)
+    }
+
+    async fn register_interface_spec(
+        &self,
+        input: InterfaceSpecRegisterInput,
+    ) -> Result<InterfaceSpecResponse, StorageError> {
+        let endpoint_scope = "/v1/interface-specs";
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = sqlx::query_scalar::<_, String>(
+                "SELECT response_json FROM idempotency_keys WHERE endpoint_scope = ?1 AND idempotency_key = ?2",
+            )
+            .bind(endpoint_scope)
+            .bind(key)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?
+            {
+                let parsed = serde_json::from_str::<InterfaceSpecResponse>(&existing)
+                    .map_err(|err| StorageError::Corruption(err.to_string()))?;
+                tx.commit()
+                    .await
+                    .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+                return Ok(parsed);
+            }
+        }
+
+        Self::extract_interface_template(&input.spec_payload)?;
+
+        let canonical_payload = Self::canonical_json_string(&input.spec_payload)?;
+        let content_hash = Self::sha256_hex(&canonical_payload);
+        let interface_ref = format!("interface:sha256:{content_hash}");
+        let now = Utc::now();
+        let now_rfc3339 = now.to_rfc3339();
+
+        sqlx::query(
+            "INSERT OR IGNORE INTO interface_specs (
+                interface_ref, created_at, name, description, author, tags_json, content_hash, payload_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        )
+        .bind(&interface_ref)
+        .bind(&now_rfc3339)
+        .bind(&input.name)
+        .bind(&input.description)
+        .bind("root_owner")
+        .bind(
+            serde_json::to_string(&input.tags)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .bind(&content_hash)
+        .bind(&canonical_payload)
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Conflict(err.to_string()))?;
+
+        let row = sqlx::query(
+            "SELECT interface_ref, created_at, name, description, author, tags_json, content_hash, payload_json
+             FROM interface_specs
+             WHERE interface_ref = ?1",
+        )
+        .bind(&interface_ref)
+        .fetch_one(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let response = InterfaceSpecResponse {
+            interface_ref: row.get("interface_ref"),
+            name: row.get("name"),
+            description: row.get("description"),
+            author: row.get("author"),
+            tags: serde_json::from_str(&row.get::<String, _>("tags_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            content_hash: row.get("content_hash"),
+            created_at: Self::parse_rfc3339(row.get::<String, _>("created_at").as_str())?,
+            payload: serde_json::from_str(&row.get::<String, _>("payload_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+        };
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            let response_json = serde_json::to_string(&response)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            sqlx::query(
+                "INSERT INTO idempotency_keys (
+                    endpoint_scope, idempotency_key, request_id, response_json, response_hash, created_at, expires_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .bind(endpoint_scope)
+            .bind(key)
+            .bind(&response.interface_ref)
+            .bind(&response_json)
+            .bind(&response_json)
+            .bind(&now_rfc3339)
+            .bind(Option::<String>::None)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(response)
+    }
+
+    async fn get_interface_spec(
+        &self,
+        interface_ref: &str,
+    ) -> Result<InterfaceSpecResponse, StorageError> {
+        let row = sqlx::query(
+            "SELECT interface_ref, created_at, name, description, author, tags_json, content_hash, payload_json
+             FROM interface_specs
+             WHERE interface_ref = ?1",
+        )
+        .bind(interface_ref)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .ok_or_else(|| StorageError::NotFound(format!("interface spec {interface_ref}")))?;
+
+        Ok(InterfaceSpecResponse {
+            interface_ref: row.get("interface_ref"),
+            name: row.get("name"),
+            description: row.get("description"),
+            author: row.get("author"),
+            tags: serde_json::from_str(&row.get::<String, _>("tags_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+            content_hash: row.get("content_hash"),
+            created_at: Self::parse_rfc3339(row.get::<String, _>("created_at").as_str())?,
+            payload: serde_json::from_str(&row.get::<String, _>("payload_json"))
+                .map_err(|err| StorageError::Corruption(err.to_string()))?,
+        })
+    }
+
+    async fn find_interface_specs(
+        &self,
+        query: InterfaceSpecQuery,
+    ) -> Result<Vec<InterfaceSpecSummary>, StorageError> {
+        let rows = sqlx::query(
+            "SELECT interface_ref, created_at, name, description, author, tags_json, content_hash
+             FROM interface_specs
+             ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let mut items = Vec::new();
+        for row in rows {
+            let item = Self::parse_interface_spec_summary(row)?;
+            if let Some(name) = query.name.as_deref() {
+                if item.name != name {
+                    continue;
+                }
+            }
+            if let Some(author) = query.author.as_deref() {
+                if item.author != author {
+                    continue;
+                }
+            }
+            if let Some(tag) = query.tag.as_deref() {
+                if !item.tags.iter().any(|value| value == tag) {
+                    continue;
+                }
+            }
+            items.push(item);
+            if let Some(limit) = query.limit {
+                if items.len() >= limit as usize {
+                    break;
+                }
+            }
+        }
+        Ok(items)
+    }
+
+    async fn create_interface_instance(
+        &self,
+        input: InterfaceInstanceCreateInput,
+    ) -> Result<InterfaceInstanceResponse, StorageError> {
+        let endpoint_scope = "/v1/interface-instances";
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            if let Some(existing) = sqlx::query_scalar::<_, String>(
+                "SELECT response_json FROM idempotency_keys WHERE endpoint_scope = ?1 AND idempotency_key = ?2",
+            )
+            .bind(endpoint_scope)
+            .bind(key)
+            .fetch_optional(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?
+            {
+                let parsed = serde_json::from_str::<InterfaceInstanceResponse>(&existing)
+                    .map_err(|err| StorageError::Corruption(err.to_string()))?;
+                tx.commit()
+                    .await
+                    .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+                return Ok(parsed);
+            }
+        }
+
+        if (input.operation_id.is_some() && input.workflow_instance_id.is_some())
+            || (input.operation_id.is_none() && input.workflow_instance_id.is_none())
+        {
+            return Err(StorageError::InvalidInput(
+                "exactly one of operation_id or workflow_instance_id must be set".to_string(),
+            ));
+        }
+
+        let spec_row = sqlx::query_scalar::<_, String>(
+            "SELECT payload_json FROM interface_specs WHERE interface_ref = ?1",
+        )
+        .bind(&input.interface_ref)
+        .fetch_optional(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        .ok_or_else(|| StorageError::NotFound(format!("interface spec {}", input.interface_ref)))?;
+        let spec_payload: Value = serde_json::from_str(&spec_row)
+            .map_err(|err| StorageError::Corruption(err.to_string()))?;
+        Self::extract_interface_template(&spec_payload)?;
+
+        if let Some(operation_id) = input.operation_id.as_deref() {
+            let exists = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM operations WHERE operation_id = ?1",
+            )
+            .bind(operation_id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            if exists == 0 {
+                return Err(StorageError::NotFound(format!("operation {operation_id}")));
+            }
+        }
+
+        if let Some(workflow_instance_id) = input.workflow_instance_id.as_deref() {
+            let exists = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM workflow_instances WHERE workflow_instance_id = ?1",
+            )
+            .bind(workflow_instance_id)
+            .fetch_one(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            if exists == 0 {
+                return Err(StorageError::NotFound(format!(
+                    "workflow instance {workflow_instance_id}"
+                )));
+            }
+        }
+
+        let interface_instance_id = format!("interface-instance:{}", Uuid::new_v4());
+        let now = Utc::now();
+        let now_rfc3339 = now.to_rfc3339();
+
+        sqlx::query(
+            "INSERT INTO interface_instances (
+                interface_instance_id, interface_ref, operation_id, workflow_instance_id, created_at,
+                viewer_audience_id, pinned_active_state_version, pinned_capability_snapshot_version,
+                pinned_audience_graph_version, gate_summary_json, blocks_json, bindings_json,
+                taint_summary_json, state
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        )
+        .bind(&interface_instance_id)
+        .bind(&input.interface_ref)
+        .bind(&input.operation_id)
+        .bind(&input.workflow_instance_id)
+        .bind(&now_rfc3339)
+        .bind(&input.viewer_audience_id)
+        .bind(&input.pinned_active_state_version)
+        .bind(&input.pinned_capability_snapshot_version)
+        .bind(&input.pinned_audience_graph_version)
+        .bind(
+            serde_json::to_string(&input.gate_summary)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .bind(
+            serde_json::to_string(&input.blocks)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .bind(
+            serde_json::to_string(&input.bindings)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .bind(
+            serde_json::to_string(&input.taint_summary)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?,
+        )
+        .bind("ready")
+        .execute(tx.as_mut())
+        .await
+        .map_err(|err| StorageError::Conflict(err.to_string()))?;
+
+        let response = self
+            .get_interface_instance_from_tx(tx.as_mut(), &interface_instance_id)
+            .await?;
+
+        if let Some(key) = input.idempotency_key.as_deref() {
+            let response_json = serde_json::to_string(&response)
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            sqlx::query(
+                "INSERT INTO idempotency_keys (
+                    endpoint_scope, idempotency_key, request_id, response_json, response_hash, created_at, expires_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .bind(endpoint_scope)
+            .bind(key)
+            .bind(&response.interface_instance_id)
+            .bind(&response_json)
+            .bind(&response_json)
+            .bind(&now_rfc3339)
+            .bind(Option::<String>::None)
+            .execute(tx.as_mut())
+            .await
+            .map_err(|err| StorageError::Conflict(err.to_string()))?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        Ok(response)
+    }
+
+    async fn get_interface_instance(
+        &self,
+        interface_instance_id: &str,
+    ) -> Result<InterfaceInstanceResponse, StorageError> {
+        self.get_interface_instance_from_pool(interface_instance_id)
+            .await
+    }
+
+    async fn get_wedge_metrics(&self) -> Result<WedgeMetricsResponse, StorageError> {
+        let generated_at = Utc::now();
+
+        let requests_total = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM experience_events WHERE kind = 'request'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let completed_drafts_total =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM operations WHERE state = 'completed' AND state_reason = 'draft_ready'")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let send_requests_total =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM approval_items")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let approvals_total = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM approval_items WHERE status IN ('consumed', 'denied')",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let sends_executed_total = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM syscalls WHERE tool_name = 'email' AND action_name = 'send' AND status = 'executed'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        let duplicate_send_violations = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM (
+                SELECT operation_id, COUNT(*) AS c
+                FROM syscalls
+                WHERE tool_name = 'email' AND action_name = 'send' AND status = 'executed'
+                GROUP BY operation_id
+                HAVING c > 1
+            )",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let mut latencies_ms = sqlx::query_scalar::<_, i64>(
+            "SELECT CAST((julianday(updated_at) - julianday(created_at)) * 86400000.0 AS INTEGER)
+             FROM operations
+             WHERE state = 'completed' AND state_reason = 'draft_ready'
+             ORDER BY updated_at ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+        latencies_ms.sort_unstable();
+        let draft_latency_p50_ms = if latencies_ms.is_empty() {
+            None
+        } else {
+            Some(latencies_ms[latencies_ms.len() / 2])
+        };
+
+        Ok(WedgeMetricsResponse {
+            generated_at,
+            requests_total,
+            completed_drafts_total,
+            send_requests_total,
+            approvals_total,
+            sends_executed_total,
+            duplicate_send_violations,
+            audit_fail_open_events: 0,
+            draft_latency_p50_ms,
+        })
+    }
+
+    async fn list_recoverable_operation_executions(
+        &self,
+    ) -> Result<Vec<RecoverableOperationExecution>, StorageError> {
+        let rows = sqlx::query(
+            "SELECT o.operation_id, a.audit_trace_id, s.syscall_id
+             FROM operations o
+             INNER JOIN audit_traces a ON a.operation_id = o.operation_id
+             INNER JOIN syscalls s ON s.operation_id = o.operation_id
+             WHERE o.state = 'running'
+               AND o.state_reason = 'approved_send_pending_execution'
+               AND s.status = 'permitted'
+             ORDER BY o.updated_at ASC, s.created_at ASC",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let mut grouped = Vec::<RecoverableOperationExecution>::new();
+        for row in rows {
+            let operation_id: String = row.get("operation_id");
+            let audit_trace_id: String = row.get("audit_trace_id");
+            let syscall_id: String = row.get("syscall_id");
+
+            if let Some(existing) = grouped
+                .iter_mut()
+                .find(|item| item.operation_id == operation_id)
+            {
+                existing.syscall_ids.push(syscall_id);
+                continue;
+            }
+
+            grouped.push(RecoverableOperationExecution {
+                operation_id,
+                audit_trace_id,
+                syscall_ids: vec![syscall_id],
+            });
+        }
+
+        Ok(grouped)
     }
 
     async fn try_acquire_operation_lease(

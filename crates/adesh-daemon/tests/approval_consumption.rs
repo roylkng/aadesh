@@ -11,6 +11,7 @@ use axum::{
 };
 use http_body_util::BodyExt;
 use serde_json::Value;
+use tokio::time::{Duration, sleep};
 use tower::ServiceExt;
 
 fn test_config() -> AppConfig {
@@ -22,7 +23,8 @@ fn test_config() -> AppConfig {
         capability_snapshot_version: "cap:bootstrap".to_string(),
         model_provider_backend: "fake".to_string(),
         model_provider_base_url: "http://127.0.0.1:1234".to_string(),
-        model_provider_model: "qwen/qwen3.5-35b-a3b".to_string(),
+        model_provider_model: "qwen3.5-27b".to_string(),
+        model_provider_timeout_seconds: 45,
         email_provider_backend: "fake".to_string(),
         email_from_address: "adesh@example.invalid".to_string(),
         email_smtp_host: "127.0.0.1".to_string(),
@@ -30,6 +32,9 @@ fn test_config() -> AppConfig {
         email_smtp_username: None,
         email_smtp_password: None,
         webhook_provider_backend: "fake".to_string(),
+        rate_limit_window_seconds: 30,
+        rate_limit_max_requests: 120,
+        syscall_retry_attempts: 2,
     }
 }
 
@@ -88,6 +93,37 @@ async fn create_send_request(app: &axum::Router) -> (String, String) {
     (operation_id, approval_id)
 }
 
+async fn fetch_operation_state(app: &axum::Router, operation_id: &str) -> Value {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(format!("/v1/operations/{operation_id}"))
+                .header("authorization", "Bearer test-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap()
+}
+
+async fn wait_for_operation_state(
+    app: &axum::Router,
+    operation_id: &str,
+    expected_state: &str,
+) -> Value {
+    for _ in 0..20 {
+        let body = fetch_operation_state(app, operation_id).await;
+        if body["data"]["state"] == expected_state {
+            return body;
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    panic!("operation {operation_id} did not reach state {expected_state}");
+}
+
 #[tokio::test]
 async fn approval_consumption_persists_preimage_then_execution_result() {
     let storage = Arc::new(SqliteStorage::connect("sqlite::memory:").await.unwrap());
@@ -120,6 +156,9 @@ async fn approval_consumption_persists_preimage_then_execution_result() {
     assert_eq!(approved["data"]["status"], "consumed");
     assert_eq!(approved["data"]["operation_state"], "running");
     assert_eq!(approved["data"]["syscall_ids"].as_array().unwrap().len(), 1);
+
+    let operation = wait_for_operation_state(&app, &operation_id, "completed").await;
+    assert_eq!(operation["data"]["state_reason"], "syscalls_executed");
 
     let syscalls = app
         .clone()
@@ -224,6 +263,9 @@ async fn approval_post_is_idempotent_and_does_not_duplicate_syscalls() {
         .await
         .unwrap();
     assert_eq!(db_count, 1);
+
+    let operation = wait_for_operation_state(&app, &operation_id, "completed").await;
+    assert_eq!(operation["data"]["state_reason"], "syscalls_executed");
 }
 
 #[tokio::test]
@@ -385,4 +427,50 @@ async fn invalid_modified_payload_returns_invalid_input_without_syscall() {
         .await
         .unwrap();
     assert_eq!(db_count, 0);
+}
+
+#[tokio::test]
+async fn recovery_worker_executes_persisted_permitted_syscall_after_restart_gap() {
+    let storage = Arc::new(SqliteStorage::connect("sqlite::memory:").await.unwrap());
+    adesh_core::ports::storage::StorageProvider::migrate(storage.as_ref())
+        .await
+        .unwrap();
+    let app = adesh_daemon::http::app(test_config(), storage.clone()).unwrap();
+
+    let (operation_id, approval_id) = create_send_request(&app).await;
+
+    let decision = adesh_core::ports::storage::StorageProvider::consume_approval_atomic(
+        storage.as_ref(),
+        adesh_core::ports::storage::ApprovalConsumeInput {
+            approval_id,
+            decision: "approve".to_string(),
+            modified_payload: None,
+            oob_challenge_id: None,
+            idempotency_key: None,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(decision.operation_state, "running");
+
+    let initial_syscalls = adesh_core::ports::storage::StorageProvider::list_syscalls_by_operation(
+        storage.as_ref(),
+        &operation_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(initial_syscalls.len(), 1);
+    assert_eq!(initial_syscalls[0].status, "permitted");
+
+    let operation = wait_for_operation_state(&app, &operation_id, "completed").await;
+    assert_eq!(operation["data"]["state_reason"], "syscalls_executed");
+
+    let final_syscalls = adesh_core::ports::storage::StorageProvider::list_syscalls_by_operation(
+        storage.as_ref(),
+        &operation_id,
+    )
+    .await
+    .unwrap();
+    assert_eq!(final_syscalls[0].status, "executed");
+    assert!(final_syscalls[0].result_ref.is_some());
 }

@@ -1,175 +1,235 @@
-# Adesh OS
+# Aadesh
 
-Adesh OS is a governed execution kernel for Root Owner requests. It decomposes a request into isolated operations, pins the active state, capability snapshot, and audience graph versions per operation, computes governance gates from action risk and data sensitivity, compiles a taint-aware working slice, verifies structured model output before any side effects, and persists audit anchors so execution and replay are deterministic.
+Aadesh is a local-first cognitive runtime that sits between raw model intelligence and host applications. Its job is to supply continuity, scoped memory, user and workspace preferences, prior decisions, unresolved loops, and evidence-grounded guidance so a host agent can act with context instead of starting cold every session.
 
-This repository is the **specification source of truth** and the **implementation planning baseline** for Adesh OS.
+This repository contains:
+- canonical behavior and architecture specs in root-level `.md` files
+- implementation sequencing and navigation docs in [`docs/`](./docs)
+- non-authoritative support material in [`reference/`](./reference)
+- legacy material in [`archive/`](./archive)
+
+## Current direction
+
+The active v1 proof is not a standalone shell and not the legacy email wedge.
+
+The active proof is:
+- cross-session cognitive continuity and personalization for coding agents
+- callable via lightweight front doors first
+- grounded in durable observations, episodes, memory promotion, retrieval, and compact reasoning
+
+The broader governed-execution and control-plane specs remain in the repo because they are still part of the long-horizon architecture, but they are not the active product center for the first proof.
 
 ## Status
 
-Pre-implementation / implementation kickoff.
-
-- Root-level `*.md` files are canonical specs unless explicitly marked otherwise.
-- `docs/IMPLEMENTATION_PLAN.md` is the current execution plan.
-- `reference/` contains non-authoritative summaries and planning aids.
-- `archive/` contains retained legacy material and is not source of truth.
-
-## Core invariants
-
-Non-negotiable:
-
-- `max_gate = max(R, S)` governs operations and syscalls.
-- Audit never fails open. Missing anchors or audit-critical persistence failures are hard failures.
-- No side effect may execute without a persisted syscall pre-image (`SyscallEnvelope`).
-- Persist-before-emit applies to operation state, approvals, denies, syscalls, and audit updates.
-- Cross-operation data transfer is explicit only through `IPCArtifact` (no implicit piping).
-- Taint laundering is prohibited without explicit sanitization and verification.
-- OOB authorization is **approval-bound**, single-use, and never elevates a session globally.
-- Audience Graph is default deny for unknown nodes, edges, scopes, or ceilings.
-- HTTP/WS control plane is Root Owner only. External agents integrate via MCP Host only.
-- In-flight operations use pinned versions only:
-  - `active_state_version`
-  - `capability_snapshot_version`
-  - `audience_graph_version`
+- The repo already contains useful substrate: local storage, queueing, artifacts, claims/evidence, model/provider boundaries, and a legacy governed-execution slice.
+- The repository is now being realigned around the cognitive-sidecar proof.
+- The active implementation target is a small callable surface for storing work episodes and returning compact current-task guidance from cross-session memory.
 
 ## Start here
 
-1. Read `index.md` first.
-2. Then read `docs/IMPLEMENTATION_PLAN.md` for sequencing and milestone gates.
-3. Use canonical specs (root-level docs) for behavioral truth.
-4. For fast traversal:
-   - `docs/DOCS_MAP.md` (spec lookup by task/endpoint)
-   - `docs/CODEBASE_MAP.md` (code entrypoints and edit surfaces)
+1. Read [`index.md`](./index.md).
+2. Read [`docs/WEDGE_V0_CODING_COGNITIVE_CONTINUITY.md`](./docs/WEDGE_V0_CODING_COGNITIVE_CONTINUITY.md).
+3. Read [`docs/IMPLEMENTATION_PLAN.md`](./docs/IMPLEMENTATION_PLAN.md).
+4. Use [`docs/DOCS_MAP.md`](./docs/DOCS_MAP.md) and [`docs/CODEBASE_MAP.md`](./docs/CODEBASE_MAP.md) for traversal.
 
-## Minimum reading order for implementation work
+## What is canonical
 
-1. `index.md`
-2. `kernel_execution_loop.md`
-3. `governance_kernel_logic.md`
-4. `jit_compiler.md`
-5. `verification_core_ruleset.md`
-6. `storage_semantics_txn.md`
-7. `storage_provider_port_contract.md`
-8. `storage_schema.md`
-9. `approval_oob_spec.md`
-10. `operation_decomposition_ipc.md`
-11. `scheduler_concurrency.md`
-12. `model_output_contract.md`
-13. `model_provider_port_contract.md`
-14. `artifact_normalization_contract.md`
-15. `schema_based_tools_and_actions.md`
-16. `ingestion_pipeline_spec.md`
-17. `fact_ledger_and_reflection_claims.md`
-18. `sandboxed_actuator_capability.md`
-19. `adaptive_interface.md`
-20. `ui_theme.md`
-21. `control_plane_api_spec.md`
-22. `email_send_payload_contract.md`
-23. `docs/IMPLEMENTATION_PLAN.md`
+- Root-level `.md` files are canonical specifications unless explicitly marked otherwise.
+- [`docs/IMPLEMENTATION_PLAN.md`](./docs/IMPLEMENTATION_PLAN.md) is the sequencing document, not a behavior override.
+- [`reference/`](./reference) is non-authoritative.
+- [`archive/`](./archive) is legacy only.
 
-For the full ordered map and precedence rules, use `index.md`.
+## Core invariants that still matter
+
+These remain non-negotiable across the broader architecture, even though the first wedge does not exercise all of them:
+
+- `max_gate = max(R, S)`
+- audit never fails open
+- no side effects without persisted syscall pre-image
+- persist before emit
+- default deny audience graph
+- explicit IPC only
+- no taint laundering without explicit sanitization and verification
+- OOB is approval-bound and single-use
+- in-flight operations use pinned versions only
+
+## Active wedge
+
+The active proof is documented in [`docs/WEDGE_V0_CODING_COGNITIVE_CONTINUITY.md`](./docs/WEDGE_V0_CODING_COGNITIVE_CONTINUITY.md).
+
+That proof is deliberately narrow:
+- store work episodes
+- accumulate scoped memory across episodes
+- retrieve and rank what matters for a new task
+- return compact, evidence-grounded guidance to a host coding agent
+
+Initial callable tools:
+- `store_work_episode`
+- `prepare_task_context`
+- `recall_relevant_memory`
+
+Initial transport stance:
+- CLI first
+- MCP after CLI is stable
+- shared internal core for both
+
+### Host-friendly CLI wrapper
+
+The thin host-facing wrapper keeps the cognition core unchanged while reducing payload friction for real coding-agent calls.
+
+Before-task context:
+
+```bash
+cargo run -p adesh-daemon -- host prepare \
+  --task "Can you help finish the upload retry work safely?" \
+  --file src/upload/upload_worker.rs \
+  --task-hint upload-retry
+```
+
+After-task writeback:
+
+```bash
+cargo run -p adesh-daemon -- host store \
+  --task "Refactor retry fix so duplicate guard stays in service layer" \
+  --summary "Moved dedupe check into UploadService and kept retry logic explicit. Timeout-path coverage is still missing." \
+  --file src/upload/upload_worker.rs \
+  --file src/upload/upload_service.rs \
+  --decision "Use explicit retry state handling rather than macro abstraction in this subsystem::Failure paths are easier to audit in explicit code" \
+  --test "fail::upload_worker_timeout_path::Timeout path still fails in the retry worker" \
+  --task-hint upload-retry
+```
+
+The wrapper auto-detects git workspaces from the current directory when possible, but the underlying workspace model remains generic.
+
+### Gemini CLI wrapper
+
+Gemini is the first reference host integration. The wrapper stays thin:
+- `host gemini prompt` formats `prepare_task_context` output into a compact Gemini-ready prompt
+- `host gemini run` formats that prompt and executes `gemini --prompt ...`
+- `host gemini store` records the follow-up work episode through the same `store_work_episode` path
+
+Build an Aadesh component with Gemini before-task context:
+
+```bash
+cargo run -p adesh-daemon -- host gemini run \
+  --task "Use Gemini CLI to build the wrapper component for Aadesh itself." \
+  --file crates/adesh-daemon/src/host_cli.rs \
+  --file README.md \
+  --task-hint gemini-wrapper \
+  -- --model gemini-2.5-pro
+```
+
+Persist what happened after the task:
+
+```bash
+cargo run -p adesh-daemon -- host gemini store \
+  --task "Use Gemini CLI to build the wrapper component for Aadesh itself." \
+  --summary "Added a thin Gemini wrapper on top of the host prepare/store flow and validated it with a fake Gemini binary." \
+  --file crates/adesh-daemon/src/gemini_wrapper.rs \
+  --file crates/adesh-daemon/tests/gemini_wrapper_flows.rs \
+  --decision "Keep the cognition core unchanged and add a thin host-specific wrapper::Transport integration should not mutate the cognitive API" \
+  --test "pass::gemini_wrapper_flows::Gemini wrapper passes prompt and passthrough args to the CLI" \
+  --task-hint gemini-wrapper
+```
+
+Shell entrypoint for the same flow:
+
+```bash
+./scripts/gemini_with_aadesh.sh run \
+  --task "Use Gemini CLI to build the wrapper component for Aadesh itself." \
+  --file crates/adesh-daemon/src/host_cli.rs \
+  --task-hint gemini-wrapper \
+  -- --model gemini-2.5-pro
+```
+
+Qwen uses the same wrapper pattern:
+
+```bash
+cargo run -p adesh-daemon -- host qwen run \
+  --task "Use Qwen CLI to review the wrapper component for Aadesh itself." \
+  --file crates/adesh-daemon/src/host_cli.rs \
+  --task-hint qwen-wrapper \
+  -- --model qwen3-coder-plus
+```
+
+```bash
+./scripts/qwen_with_aadesh.sh run \
+  --task "Use Qwen CLI to review the wrapper component for Aadesh itself." \
+  --file crates/adesh-daemon/src/host_cli.rs \
+  --task-hint qwen-wrapper \
+  -- --model qwen3-coder-plus
+```
+
+## What is being reused
+
+Useful substrate already in the repo:
+- SQLite-backed local storage and migrations
+- append-oriented event and artifact persistence
+- claims/evidence/conflict machinery
+- job queue foundation
+- model/provider boundaries
+- typed contracts and response envelopes
+
+These are being reused for the wedge instead of replaced.
+
+## What is being deferred
+
+Deferred from the first proof:
+- the legacy email draft-and-send wedge
+- approval/OOB-heavy execution as the primary product path
+- workflow/interface runtime as a hot path
+- UI-first product experience
+- broad actuator and sandbox surfaces
+- distributed sync and remote infra
+
+Deferred documents remain in the repo, but they are not the current implementation driver.
 
 ## Repository layout
 
-### Canonical specs (root)
-Root-level `*.md` files define canonical behavior unless explicitly marked otherwise.
+### Canonical specs
+Root-level `.md` files define behavior and architecture.
 
-Key entry points:
-- `index.md`
-- `kernel_execution_loop.md`
-- `governance_kernel_logic.md`
-- `jit_compiler.md`
-- `verification_core_ruleset.md`
-- `storage_semantics_txn.md`
-- `approval_oob_spec.md`
-- `operation_decomposition_ipc.md`
-- `artifact_normalization_contract.md`
-- `schema_based_tools_and_actions.md`
-- `ingestion_pipeline_spec.md`
-- `fact_ledger_and_reflection_claims.md`
-- `sandboxed_actuator_capability.md`
-- `adaptive_interface.md`
-- `ui_theme.md`
-- `scheduler_concurrency.md`
-- `control_plane_api_spec.md`
-- `email_send_payload_contract.md`
-- `schema_registry_and_versioning.md`
-- `data_classification_and_taint_labelling.md`
-- `sanitization_subsystem.md`
-- `replay_and_deterministic_re_execution.md`
-- `threat_model_spec.md`
-- Port contracts:
-  - `storage_provider_port_contract.md`
-  - `blobstore_provider_port_contract.md`
-  - `jobqueue_provider_port_contract.md`
-  - `tool_provider_port_contract.md`
-  - `model_provider_port_contract.md`
+Primary entry points:
+- [`index.md`](./index.md)
+- [`storage_semantics_txn.md`](./storage_semantics_txn.md)
+- [`governance_kernel_logic.md`](./governance_kernel_logic.md)
+- [`verification_core_ruleset.md`](./verification_core_ruleset.md)
+- port contracts such as [`storage_provider_port_contract.md`](./storage_provider_port_contract.md)
 
-### Implementation plan
-- `docs/README.md`
-- `docs/IMPLEMENTATION_PLAN.md`
-- `docs/REPO_ORGANIZATION.md`
-- `docs/DOCS_MAP.md`
-- `docs/CODEBASE_MAP.md`
+### Implementation and navigation docs
+- [`docs/README.md`](./docs/README.md)
+- [`docs/IMPLEMENTATION_PLAN.md`](./docs/IMPLEMENTATION_PLAN.md)
+- [`docs/DOCS_MAP.md`](./docs/DOCS_MAP.md)
+- [`docs/CODEBASE_MAP.md`](./docs/CODEBASE_MAP.md)
+- [`docs/WEDGE_V0_CODING_COGNITIVE_CONTINUITY.md`](./docs/WEDGE_V0_CODING_COGNITIVE_CONTINUITY.md)
 
-This plan is the implementation baseline. It is not a substitute for canonical specs.
+### Non-authoritative support material
+- [`reference/README.md`](./reference/README.md)
 
-### Reference docs (non-authoritative)
-- `reference/README.md`
-
-If a `reference/` file conflicts with a canonical spec, the canonical spec wins.
-
-### Archive docs (legacy)
-- `archive/README.md`
-
-Archive files are retained for historical context only and must not be used as source of truth unless reintroduced into canonical specs.
-
-## Implementation start
-
-Coding begins at **Milestone 1** in `docs/IMPLEMENTATION_PLAN.md`.
-
-Current starting assumptions:
-- language/runtime: Rust
-- async runtime: Tokio
-- HTTP/WS: Axum
-- architecture: pluggable providers behind explicit port contracts
-- storage: implement SQLite first as a **reference backend** without baking SQLite assumptions into kernel behavior
-
-Milestone 1 scope (first allowed slice):
-- localhost HTTP + WS
-- Root Owner-only control plane
-- request acceptance and operation creation
-- audit skeleton persistence
-- idempotency keys
-- operation leases
-- fail-closed behavior on audit-critical paths
+### Legacy material
+- [`archive/README.md`](./archive/README.md)
 
 ## Validation and drift checks
 
-These checks intentionally avoid `ripgrep`.
+Use the repo-local drift guard before behavior changes:
 
-### 1) No stale filename references
-```sh
-grep -RInE "Audience_graph_and_disclosure_policy\.md|JIT_compiler\.md|control_plane-apispec\.md|governanace_kernal_logic\.md|replay_and_deterministic_re-exection\.md|threat_mode\.spec\.md|modelprovider_port_contract\.md|toolprovider_port_contract\.md|Provider_Interfaces\.md|contracts\.md|rust_contracts\.md|Problem\.md|task\.md|code_skeleton\.md|Api_spec\.md" .
+```bash
+./.codex/skills/adesh-spec-guard/scripts/check_spec_drift.sh .
 ```
 
-### 2) No stale approval endpoint paths
+Useful grep-based checks that do not require `ripgrep`:
 
-```sh
-grep -RInE "/v1/approvals/\{operation_id\}|approvals/\{operation_id\}" .
-```
-
-### 3) No stale pinned-state fields
-
-```sh
+```bash
+grep -RInE "/v1/approvals/\\{operation_id\\}|approvals/\\{operation_id\\}" .
 grep -RIn --exclude=README.md --exclude-dir=.codex "pinned_state_version" .
+grep -RIn "WEDGE_V0_EMAIL_DRAFT_AND_SEND" .
 ```
-
-Expect zero hits for all three.
 
 ## Contribution rule
 
 Specs before behavior:
 
-* If behavior is missing or ambiguous, update the spec first.
-* Implementations must follow canonical specs and port contracts.
-* Keep file placement aligned with `docs/REPO_ORGANIZATION.md`.
+- patch canonical specs first when behavior is missing or ambiguous
+- keep the core architecture generic instead of baking the first wedge into the base model
+- preserve reusable substrate unless there is a concrete reason to replace it
+- do not broaden scope toward a full shell or OS until the cognitive-sidecar proof is real
