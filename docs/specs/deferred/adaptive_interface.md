@@ -2,7 +2,7 @@
 Adesh OS
 
 Status:
-- Canonical root-level specification.
+- Deferred specification retained under docs/specs/deferred.
 - Governs adaptive UI behavior layers and safety boundaries.
 - Applies to Root Owner control-plane UI surfaces.
 

@@ -31,13 +31,14 @@ use adesh_core::{
         CapabilityActivationReviewInput, CapabilitySnapshotMintInput, CompiledSliceInput,
         GateDecisionInput, IngestJobCreateInput, IngestJobItemUpsertInput,
         IngestJobStatusUpdateInput, InterfaceInstanceCreateInput, InterfaceSpecQuery,
-        InterfaceSpecRegisterInput, LeaseAcquisition, ManualArtifactCreateInput, MemoryClaimQuery,
-        MemoryClaimUpsertInput, OobStartInput, OobVerifyInput, OperationLease,
-        ReasoningOutputInput, RecoverableOperationExecution, ReplayCreateInput,
-        ReviewDecisionInput, SchemaRegisterInput, SearchDocumentQuery, SearchDocumentUpsertInput,
-        StorageProvider, SyscallStatusUpdateInput, WorkEpisodeListQuery, WorkEpisodeStoreInput,
-        WorkflowInstanceCreateInput, WorkflowInstanceStateUpdateInput, WorkflowSpecQuery,
-        WorkflowSpecRegisterInput,
+        InterfaceSpecRegisterInput, InterventionContextInput, InterventionContextResponse,
+        InterventionOutcomeInput, InterventionOutcomeQuery, InterventionOutcomeResponse,
+        LeaseAcquisition, ManualArtifactCreateInput, MemoryClaimQuery, MemoryClaimUpsertInput,
+        OobStartInput, OobVerifyInput, OperationLease, ReasoningOutputInput,
+        RecoverableOperationExecution, ReplayCreateInput, ReviewDecisionInput, SchemaRegisterInput,
+        SearchDocumentQuery, SearchDocumentUpsertInput, StorageProvider, SyscallStatusUpdateInput,
+        WorkEpisodeListQuery, WorkEpisodeStoreInput, WorkflowInstanceCreateInput,
+        WorkflowInstanceStateUpdateInput, WorkflowSpecQuery, WorkflowSpecRegisterInput,
     },
 };
 
@@ -55,6 +56,14 @@ impl SqliteStorage {
     pub async fn connect(database_url: &str) -> Result<Self, StorageError> {
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
+            .after_connect(|conn, _meta| {
+                Box::pin(async move {
+                    sqlx::query("PRAGMA foreign_keys = ON")
+                        .execute(conn)
+                        .await?;
+                    Ok(())
+                })
+            })
             .connect(database_url)
             .await
             .map_err(|err| StorageError::Unavailable(err.to_string()))?;
@@ -5362,5 +5371,622 @@ impl StorageProvider for SqliteStorage {
         }
 
         Ok(())
+    }
+
+    async fn store_intervention_outcome(
+        &self,
+        input: InterventionOutcomeInput,
+    ) -> Result<InterventionOutcomeResponse, StorageError> {
+        let now = Utc::now();
+        if !matches!(
+            input.selected_response.as_str(),
+            "accepted" | "ignored" | "modified"
+        ) {
+            return Err(StorageError::InvalidInput(format!(
+                "unsupported intervention outcome `{}`",
+                input.selected_response
+            )));
+        }
+
+        let context_ref = if let Some(context_ref) = input.context_ref.as_deref() {
+            let exists = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(1) FROM intervention_context WHERE context_id = ?",
+            )
+            .bind(context_ref)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            if exists > 0 {
+                Some(context_ref.to_string())
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let learn_from_this = input.learn_from_this && context_ref.is_some();
+        let id = if input.intervention_id.is_empty() {
+            Uuid::new_v4().to_string()
+        } else {
+            input.intervention_id.clone()
+        };
+
+        let idempotency_key = input.idempotency_key.clone().unwrap_or_else(|| {
+            let mut hasher = Sha256::new();
+            hasher.update(format!(
+                "{}/{}/{}/{}",
+                input.episode_id.as_deref().unwrap_or(""),
+                context_ref.as_deref().unwrap_or(""),
+                input.surfaced_direction,
+                input.selected_response,
+            ));
+            BASE64_STANDARD.encode(hasher.finalize())
+        });
+
+        let result = sqlx::query(
+            "INSERT INTO intervention_outcomes
+             (intervention_id, episode_id, surfaced_direction, context_ref, surfaced_at,
+              selected_response, modified_payload, outcome_ref, correction_summary,
+              learn_from_this, idempotency_key, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(idempotency_key) DO NOTHING",
+        )
+        .bind(&id)
+        .bind(&input.episode_id)
+        .bind(&input.surfaced_direction)
+        .bind(&context_ref)
+        .bind(input.surfaced_at.to_rfc3339())
+        .bind(&input.selected_response)
+        .bind(&input.modified_payload)
+        .bind(&input.outcome_ref)
+        .bind(&input.correction_summary)
+        .bind(learn_from_this)
+        .bind(&idempotency_key)
+        .bind(now.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if result.rows_affected() == 0 {
+            let final_id = sqlx::query_scalar::<_, String>(
+                "SELECT intervention_id FROM intervention_outcomes WHERE idempotency_key = ?",
+            )
+            .bind(&idempotency_key)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+            return self.get_intervention_outcome(&final_id).await;
+        }
+
+        Ok(InterventionOutcomeResponse {
+            intervention_id: id,
+            episode_id: input.episode_id,
+            surfaced_direction: input.surfaced_direction,
+            context_ref,
+            surfaced_at: input.surfaced_at,
+            selected_response: input.selected_response,
+            modified_payload: input.modified_payload,
+            outcome_ref: input.outcome_ref,
+            correction_summary: input.correction_summary,
+            learn_from_this,
+            idempotency_key: Some(idempotency_key),
+            created_at: now,
+        })
+    }
+
+    async fn get_intervention_outcome(
+        &self,
+        intervention_id: &str,
+    ) -> Result<InterventionOutcomeResponse, StorageError> {
+        let row = sqlx::query(
+            "SELECT intervention_id, episode_id, surfaced_direction, context_ref, surfaced_at,
+                    selected_response, modified_payload, outcome_ref, correction_summary,
+                    learn_from_this, idempotency_key, created_at
+             FROM intervention_outcomes WHERE intervention_id = ?",
+        )
+        .bind(intervention_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        Ok(InterventionOutcomeResponse {
+            intervention_id: row.get("intervention_id"),
+            episode_id: row.get("episode_id"),
+            surfaced_direction: row.get("surfaced_direction"),
+            context_ref: row.get("context_ref"),
+            surfaced_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("surfaced_at"))
+                .unwrap_or_else(|_| Utc::now().into())
+                .with_timezone(&Utc),
+            selected_response: row.get("selected_response"),
+            modified_payload: row.get("modified_payload"),
+            outcome_ref: row.get("outcome_ref"),
+            correction_summary: row.get("correction_summary"),
+            learn_from_this: row.get("learn_from_this"),
+            idempotency_key: row.get("idempotency_key"),
+            created_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("created_at"))
+                .unwrap_or_else(|_| Utc::now().into())
+                .with_timezone(&Utc),
+        })
+    }
+
+    async fn list_intervention_outcomes(
+        &self,
+        query: InterventionOutcomeQuery,
+    ) -> Result<Vec<InterventionOutcomeResponse>, StorageError> {
+        let mut sql = sqlx::QueryBuilder::new(
+            "SELECT intervention_id, episode_id, surfaced_direction, context_ref, surfaced_at,
+                    selected_response, modified_payload, outcome_ref, correction_summary,
+                    learn_from_this, idempotency_key, created_at
+             FROM intervention_outcomes WHERE 1=1",
+        );
+
+        if let Some(episode_id) = &query.episode_id {
+            sql.push(" AND episode_id = ");
+            sql.push_bind(episode_id);
+        }
+
+        if let Some(context_ref) = &query.context_ref {
+            sql.push(" AND context_ref = ");
+            sql.push_bind(context_ref);
+        }
+
+        if let Some(learn_from_this) = query.learn_from_this {
+            sql.push(" AND learn_from_this = ");
+            sql.push_bind(learn_from_this);
+        }
+
+        if let Some(selected_response) = &query.selected_response {
+            sql.push(" AND selected_response = ");
+            sql.push_bind(selected_response);
+        }
+
+        sql.push(" ORDER BY surfaced_at DESC LIMIT 100");
+
+        let rows = sql
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let outcomes = rows
+            .into_iter()
+            .map(|row| InterventionOutcomeResponse {
+                intervention_id: row.get("intervention_id"),
+                episode_id: row.get("episode_id"),
+                surfaced_direction: row.get("surfaced_direction"),
+                context_ref: row.get("context_ref"),
+                surfaced_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("surfaced_at"))
+                    .unwrap_or_else(|_| Utc::now().into())
+                    .with_timezone(&Utc),
+                selected_response: row.get("selected_response"),
+                modified_payload: row.get("modified_payload"),
+                outcome_ref: row.get("outcome_ref"),
+                correction_summary: row.get("correction_summary"),
+                learn_from_this: row.get("learn_from_this"),
+                idempotency_key: row.get("idempotency_key"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("created_at"))
+                    .unwrap_or_else(|_| Utc::now().into())
+                    .with_timezone(&Utc),
+            })
+            .collect();
+
+        Ok(outcomes)
+    }
+
+    async fn store_intervention_context(
+        &self,
+        input: InterventionContextInput,
+    ) -> Result<InterventionContextResponse, StorageError> {
+        let now = Utc::now();
+        let id = if input.context_id.is_empty() {
+            let mut hasher = Sha256::new();
+            hasher.update(format!(
+                "{}/{}/{}/{}/{}/{}/{}/{}/{}",
+                input.scope_type,
+                input.scope_key,
+                input.task_prompt,
+                input.host_agent_id.as_deref().unwrap_or(""),
+                input.host_agent_kind.as_deref().unwrap_or(""),
+                input.host_model.as_deref().unwrap_or(""),
+                input.selected_direction.as_deref().unwrap_or(""),
+                input.selected_direction_rank.unwrap_or(-1),
+                input.surfaced_directions_json.as_deref().unwrap_or(""),
+            ));
+            format!(
+                "ctx-{}",
+                BASE64_STANDARD
+                    .encode(hasher.finalize())
+                    .replace('/', "_")
+                    .replace('+', "-")
+            )
+        } else {
+            input.context_id.clone()
+        };
+
+        let scope_key = input.scope_key.clone();
+
+        let _result = sqlx::query(
+            "INSERT INTO intervention_context
+             (context_id, scope_type, scope_key, task_prompt, prepared_at,
+              host_agent_id, host_agent_kind, host_model, selected_direction,
+              selected_direction_rank, surfaced_directions_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(context_id) DO NOTHING",
+        )
+        .bind(&id)
+        .bind(&input.scope_type)
+        .bind(&scope_key)
+        .bind(&input.task_prompt)
+        .bind(input.prepared_at.to_rfc3339())
+        .bind(&input.host_agent_id)
+        .bind(&input.host_agent_kind)
+        .bind(&input.host_model)
+        .bind(&input.selected_direction)
+        .bind(input.selected_direction_rank)
+        .bind(&input.surfaced_directions_json)
+        .bind(now.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        if _result.rows_affected() == 0 {
+            return self.get_intervention_context(&id).await;
+        }
+
+        Ok(InterventionContextResponse {
+            context_id: id,
+            scope_type: input.scope_type,
+            scope_key,
+            task_prompt: input.task_prompt,
+            prepared_at: input.prepared_at,
+            host_agent_id: input.host_agent_id,
+            host_agent_kind: input.host_agent_kind,
+            host_model: input.host_model,
+            selected_direction: input.selected_direction,
+            selected_direction_rank: input.selected_direction_rank,
+            surfaced_directions_json: input.surfaced_directions_json,
+            created_at: now,
+        })
+    }
+
+    async fn get_intervention_context(
+        &self,
+        context_id: &str,
+    ) -> Result<InterventionContextResponse, StorageError> {
+        let row = sqlx::query(
+            "SELECT context_id, scope_type, scope_key, task_prompt, prepared_at,
+                    host_agent_id, host_agent_kind, host_model, selected_direction,
+                    selected_direction_rank, surfaced_directions_json, created_at
+             FROM intervention_context WHERE context_id = ?",
+        )
+        .bind(context_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        Ok(InterventionContextResponse {
+            context_id: row.get("context_id"),
+            scope_type: row.get("scope_type"),
+            scope_key: row.get("scope_key"),
+            task_prompt: row.get("task_prompt"),
+            prepared_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("prepared_at"))
+                .unwrap_or_else(|_| Utc::now().into())
+                .with_timezone(&Utc),
+            host_agent_id: row.get("host_agent_id"),
+            host_agent_kind: row.get("host_agent_kind"),
+            host_model: row.get("host_model"),
+            selected_direction: row.get("selected_direction"),
+            selected_direction_rank: row.get("selected_direction_rank"),
+            surfaced_directions_json: row.get("surfaced_directions_json"),
+            created_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("created_at"))
+                .unwrap_or_else(|_| Utc::now().into())
+                .with_timezone(&Utc),
+        })
+    }
+
+    async fn find_intervention_contexts(
+        &self,
+        scope_type: &str,
+        scope_key: &str,
+        limit: usize,
+    ) -> Result<Vec<InterventionContextResponse>, StorageError> {
+        let limit = if limit == 0 { 10 } else { limit };
+        let rows = sqlx::query(
+            "SELECT context_id, scope_type, scope_key, task_prompt, prepared_at,
+                    host_agent_id, host_agent_kind, host_model, selected_direction,
+                    selected_direction_rank, surfaced_directions_json, created_at
+             FROM intervention_context
+             WHERE scope_type = ? AND scope_key = ?
+             ORDER BY prepared_at DESC LIMIT ?",
+        )
+        .bind(scope_type)
+        .bind(scope_key)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let contexts = rows
+            .into_iter()
+            .map(|row| InterventionContextResponse {
+                context_id: row.get("context_id"),
+                scope_type: row.get("scope_type"),
+                scope_key: row.get("scope_key"),
+                task_prompt: row.get("task_prompt"),
+                prepared_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("prepared_at"))
+                    .unwrap_or_else(|_| Utc::now().into())
+                    .with_timezone(&Utc),
+                host_agent_id: row.get("host_agent_id"),
+                host_agent_kind: row.get("host_agent_kind"),
+                host_model: row.get("host_model"),
+                selected_direction: row.get("selected_direction"),
+                selected_direction_rank: row.get("selected_direction_rank"),
+                surfaced_directions_json: row.get("surfaced_directions_json"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("created_at"))
+                    .unwrap_or_else(|_| Utc::now().into())
+                    .with_timezone(&Utc),
+            })
+            .collect();
+
+        Ok(contexts)
+    }
+
+    async fn store_eval_run(
+        &self,
+        input: adesh_core::ports::storage::EvalRunInput,
+    ) -> Result<adesh_core::ports::storage::EvalRunResponse, StorageError> {
+        let now = Utc::now();
+        let id = if input.run_id.is_empty() {
+            Uuid::new_v4().to_string()
+        } else {
+            input.run_id.clone()
+        };
+
+        let idempotency_key = input.idempotency_key.clone().unwrap_or_else(|| {
+            let mut hasher = Sha256::new();
+            hasher.update(format!(
+                "{}/{}/{}",
+                input.eval_name,
+                input.eval_version.as_deref().unwrap_or(""),
+                input.run_started_at.to_rfc3339(),
+            ));
+            BASE64_STANDARD.encode(hasher.finalize())
+        });
+
+        let run_completed_at_str: Option<String> = input.run_completed_at.map(|dt| dt.to_rfc3339());
+
+        let mut query_builder = sqlx::QueryBuilder::new(
+            "INSERT INTO eval_runs (run_id, eval_name, eval_version, run_started_at, run_completed_at, baseline_summary, treatment_summary, judge_summary, failure_tags, promotion_decision, idempotency_key, created_at) ",
+        );
+        query_builder.push("VALUES (");
+        query_builder.push_bind(&id);
+        query_builder.push(", ");
+        query_builder.push_bind(&input.eval_name);
+        query_builder.push(", ");
+        query_builder.push_bind(&input.eval_version);
+        query_builder.push(", ");
+        query_builder.push_bind(input.run_started_at.to_rfc3339());
+        query_builder.push(", ");
+        query_builder.push_bind(&run_completed_at_str);
+        query_builder.push(", ");
+        query_builder.push_bind(&input.baseline_summary);
+        query_builder.push(", ");
+        query_builder.push_bind(&input.treatment_summary);
+        query_builder.push(", ");
+        query_builder.push_bind(&input.judge_summary);
+        query_builder.push(", ");
+        query_builder.push_bind(&input.failure_tags);
+        query_builder.push(", ");
+        query_builder.push_bind(&input.promotion_decision);
+        query_builder.push(", ");
+        query_builder.push_bind(&idempotency_key);
+        query_builder.push(", ");
+        query_builder.push_bind(now.to_rfc3339());
+        query_builder.push(") ON CONFLICT(idempotency_key) DO NOTHING");
+
+        let result = query_builder
+            .build()
+            .execute(&self.pool)
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let final_run_id = if result.rows_affected() == 0 {
+            sqlx::query_scalar::<_, String>(
+                "SELECT run_id FROM eval_runs WHERE idempotency_key = ?",
+            )
+            .bind(&idempotency_key)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?
+        } else {
+            id
+        };
+
+        if result.rows_affected() == 0 {
+            self.get_eval_run(&final_run_id).await
+        } else {
+            Ok(adesh_core::ports::storage::EvalRunResponse {
+                run_id: final_run_id,
+                eval_name: input.eval_name,
+                eval_version: input.eval_version,
+                run_started_at: input.run_started_at,
+                run_completed_at: input.run_completed_at,
+                baseline_summary: input.baseline_summary,
+                treatment_summary: input.treatment_summary,
+                judge_summary: input.judge_summary,
+                failure_tags: input.failure_tags,
+                promotion_decision: input.promotion_decision,
+                idempotency_key: Some(idempotency_key),
+                created_at: now,
+            })
+        }
+    }
+
+    async fn get_eval_run(
+        &self,
+        run_id: &str,
+    ) -> Result<adesh_core::ports::storage::EvalRunResponse, StorageError> {
+        let row = sqlx::query(
+            "SELECT run_id, eval_name, eval_version, run_started_at, run_completed_at,
+                    baseline_summary, treatment_summary, judge_summary, failure_tags,
+                    promotion_decision, idempotency_key, created_at
+             FROM eval_runs WHERE run_id = ?",
+        )
+        .bind(run_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        Ok(adesh_core::ports::storage::EvalRunResponse {
+            run_id: row.get("run_id"),
+            eval_name: row.get("eval_name"),
+            eval_version: row.get("eval_version"),
+            run_started_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("run_started_at"))
+                .unwrap_or_else(|_| Utc::now().into())
+                .with_timezone(&Utc),
+            run_completed_at: row.get::<Option<&str>, _>("run_completed_at").map(|s| {
+                DateTime::parse_from_rfc3339(s)
+                    .unwrap_or_else(|_| Utc::now().into())
+                    .with_timezone(&Utc)
+            }),
+            baseline_summary: row.get("baseline_summary"),
+            treatment_summary: row.get("treatment_summary"),
+            judge_summary: row.get("judge_summary"),
+            failure_tags: row.get("failure_tags"),
+            promotion_decision: row.get("promotion_decision"),
+            idempotency_key: row.get("idempotency_key"),
+            created_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("created_at"))
+                .unwrap_or_else(|_| Utc::now().into())
+                .with_timezone(&Utc),
+        })
+    }
+
+    async fn list_eval_runs(
+        &self,
+        query: adesh_core::ports::storage::EvalRunQuery,
+    ) -> Result<Vec<adesh_core::ports::storage::EvalRunResponse>, StorageError> {
+        let mut sql = sqlx::QueryBuilder::new(
+            "SELECT run_id, eval_name, eval_version, run_started_at, run_completed_at,
+                    baseline_summary, treatment_summary, judge_summary, failure_tags,
+                    promotion_decision, idempotency_key, created_at
+             FROM eval_runs WHERE 1=1",
+        );
+
+        if let Some(eval_name) = &query.eval_name {
+            sql.push(" AND eval_name = ");
+            sql.push_bind(eval_name);
+        }
+
+        if let Some(eval_version) = &query.eval_version {
+            sql.push(" AND eval_version = ");
+            sql.push_bind(eval_version);
+        }
+
+        if let Some(promotion_decision) = &query.promotion_decision {
+            sql.push(" AND promotion_decision = ");
+            sql.push_bind(promotion_decision);
+        }
+
+        sql.push(" ORDER BY run_started_at DESC LIMIT 100");
+
+        let rows = sql
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let runs = rows
+            .into_iter()
+            .map(|row| adesh_core::ports::storage::EvalRunResponse {
+                run_id: row.get("run_id"),
+                eval_name: row.get("eval_name"),
+                eval_version: row.get("eval_version"),
+                run_started_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("run_started_at"))
+                    .unwrap_or_else(|_| Utc::now().into())
+                    .with_timezone(&Utc),
+                run_completed_at: row.get::<Option<&str>, _>("run_completed_at").map(|s| {
+                    DateTime::parse_from_rfc3339(s)
+                        .unwrap_or_else(|_| Utc::now().into())
+                        .with_timezone(&Utc)
+                }),
+                baseline_summary: row.get("baseline_summary"),
+                treatment_summary: row.get("treatment_summary"),
+                judge_summary: row.get("judge_summary"),
+                failure_tags: row.get("failure_tags"),
+                promotion_decision: row.get("promotion_decision"),
+                idempotency_key: row.get("idempotency_key"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("created_at"))
+                    .unwrap_or_else(|_| Utc::now().into())
+                    .with_timezone(&Utc),
+            })
+            .collect();
+
+        Ok(runs)
+    }
+
+    async fn store_eval_artifact(
+        &self,
+        input: adesh_core::ports::storage::EvalArtifactInput,
+    ) -> Result<adesh_core::ports::storage::EvalArtifactResponse, StorageError> {
+        let now = Utc::now();
+        let id = if input.artifact_id.is_empty() {
+            Uuid::new_v4().to_string()
+        } else {
+            input.artifact_id.clone()
+        };
+
+        sqlx::query(
+            "INSERT INTO eval_artifacts
+             (artifact_id, run_id, artifact_kind, file_path, mime_type, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(&input.run_id)
+        .bind(&input.artifact_kind)
+        .bind(&input.file_path)
+        .bind(&input.mime_type)
+        .bind(now.to_rfc3339())
+        .execute(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        Ok(adesh_core::ports::storage::EvalArtifactResponse {
+            artifact_id: id,
+            run_id: input.run_id,
+            artifact_kind: input.artifact_kind,
+            file_path: input.file_path,
+            mime_type: input.mime_type,
+            created_at: now,
+        })
+    }
+
+    async fn list_eval_artifacts(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<adesh_core::ports::storage::EvalArtifactResponse>, StorageError> {
+        let rows = sqlx::query(
+            "SELECT artifact_id, run_id, artifact_kind, file_path, mime_type, created_at
+             FROM eval_artifacts WHERE run_id = ?",
+        )
+        .bind(run_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|err| StorageError::Unavailable(err.to_string()))?;
+
+        let artifacts = rows
+            .into_iter()
+            .map(|row| adesh_core::ports::storage::EvalArtifactResponse {
+                artifact_id: row.get("artifact_id"),
+                run_id: row.get("run_id"),
+                artifact_kind: row.get("artifact_kind"),
+                file_path: row.get("file_path"),
+                mime_type: row.get("mime_type"),
+                created_at: DateTime::parse_from_rfc3339(&row.get::<&str, _>("created_at"))
+                    .unwrap_or_else(|_| Utc::now().into())
+                    .with_timezone(&Utc),
+            })
+            .collect();
+
+        Ok(artifacts)
     }
 }

@@ -1,68 +1,100 @@
-# Adesh OS Repository Instructions
+# Aadesh Repository Instructions
 
 ## Scope
 
 These instructions apply to the entire repository rooted here.
 
-## Source of Truth
+## Current Product Direction
 
-- Root-level `.md` files are canonical specifications unless explicitly marked otherwise.
-- `docs/IMPLEMENTATION_PLAN.md` is the implementation sequencing document, not a behavior override.
-- `reference/` is non-authoritative support material.
-- `archive/` is legacy material and must not be used to define behavior.
+Aadesh is currently being built as a continuity-first supervisory substrate for agents in bounded environments.
 
-## Spec Precedence
+Active implementation focus:
+- cross-session cognitive continuity
+- scoped memory and ranked context preparation
+- host wrappers / connector events / MCP surface on the same core
+- supervisory traces for suggested directions, acceptance, modification, ignored outcomes, and later evidence
+- evaluation persistence and advisory learning
 
-When documents overlap, use this order:
+Deferred unless explicitly reopened:
+- full governed execution OS expansion
+- broad governance kernel/JIT/control-plane rollout
+- workflow/interface runtime expansion
+- audience graph and sanitization expansion
+- controller/veto/orchestration behavior
 
-1. `index.md`
-2. `storage_semantics_txn.md`
-3. `governance_kernel_logic.md`
-4. `verification_core_ruleset.md`
-5. `control_plane_api_spec.md` and `mcp_host_surface_contract_spec.md`
-6. Port contracts
-7. `docs/IMPLEMENTATION_PLAN.md`
-8. `reference/`
-9. `archive/`
+## Source Of Truth
 
-## Non-Negotiable Invariants
+Use this order for current work:
 
-- `max_gate = max(R, S)`
-- Audit never fails open
-- No side effects without persisted syscall pre-image
-- Persist before emit
-- Default deny audience graph
-- Explicit IPC only
-- No taint laundering without explicit sanitization and verification
-- OOB is approval-bound and single-use
-- In-flight operations use pinned versions only
+1. `docs/ARCHITECTURE_STATUS.md`
+2. `docs/IMPLEMENTATION_PLAN.md`
+3. `docs/WEDGE_V0_CODING_COGNITIVE_CONTINUITY.md`
+4. `docs/WEDGE_V0_RUNBOOK.md`
+5. `docs/specs/README.md`
+6. active specs under `docs/specs/active/`
+7. `docs/DOCS_MAP.md` and `docs/CODEBASE_MAP.md`
+8. deferred specs under `docs/specs/deferred/` only when intentionally working on deferred scope
+9. `reference/`
+10. `archive/`
+
+## Active Spec Locations
+
+Active implementation specs live under `docs/specs/active/`, not the repository root.
+
+Important active specs:
+- `docs/specs/active/storage_semantics_txn.md`
+- `docs/specs/active/storage_provider_port_contract.md`
+- `docs/specs/active/storage_schema.md`
+- `docs/specs/active/fact_ledger_and_reflection_claims.md`
+- `docs/specs/active/artifact_normalization_contract.md`
+- `docs/specs/active/ingestion_pipeline_spec.md`
+- `docs/specs/active/model_output_contract.md`
+- `docs/specs/active/mcp_host_surface_contract_spec.md`
+
+Deferred architecture specs live under `docs/specs/deferred/` and are not current acceptance gates.
+
+## Non-Negotiable Current Invariants
+
+- Do not re-expand scope into deferred architecture without updating status and plan docs.
+- Intervention outcomes must remain deterministic and idempotent.
+- Unlinked or weakly linked outcomes are observable but not learnable.
+- Advisory learning remains advisory; no controller/veto/orchestration behavior in the current phase.
+- Persist before using traces for learning.
+- Keep public tool/API surface stable unless the plan explicitly changes it.
+
+Legacy fail-closed governance invariants remain relevant for old control-plane paths, but they do not define the active product wedge.
 
 ## Implementation Rules
 
 - Do not invent unspecified behavior.
-- If behavior is ambiguous, patch the relevant spec before changing code.
-- Do not weaken fail-closed or audit-critical paths for convenience.
-- Do not implement beyond the active milestone scope unless the spec or plan is updated first.
-- Keep provider interfaces backend-agnostic even when implementing the SQLite reference backend.
-
-## Milestone Discipline
-
-- Start from Milestone 1 in `docs/IMPLEMENTATION_PLAN.md`.
+- If behavior is ambiguous, patch the relevant active doc/spec before changing code.
+- Keep working continuity/cognition paths intact unless there is concrete defect evidence.
 - Keep changes vertical, compileable, and testable.
 - Do not merge partial unsafe behavior behind TODO comments on critical paths.
 
 ## Repo Hygiene
 
-- Keep canonical specs in the repo root.
-- Put summaries, sketches, and migration notes in `reference/`.
+- Root markdown is entry-only: `README.md`, `index.md`, and `AGENTS.md`.
+- Put active specs in `docs/specs/active/`.
+- Put deferred specs in `docs/specs/deferred/`.
+- Put summaries, sketches, and migration notes in `reference/` or `docs/` depending on authority.
 - Put superseded material in `archive/`.
-- Maintain filename consistency with `index.md`.
+- Keep `docs/specs/README.md`, `docs/DOCS_MAP.md`, and `docs/ARCHITECTURE_STATUS.md` aligned after moves.
 
 ## Validation Before Behavior Changes
 
-Before implementing behavior-changing code:
+Run:
 
-- confirm the relevant canonical spec exists and is current
-- confirm filenames and endpoints are current
-- confirm pinned-version fields are consistent across docs and contracts
-- update tests or add placeholders only when the milestone explicitly includes them
+```bash
+./.codex/skills/adesh-spec-guard/scripts/check_spec_drift.sh .
+CARGO_TARGET_DIR=/tmp/adesh-cargo-target cargo test --workspace
+```
+
+For connector/supervisory work, also run:
+
+```bash
+./scripts/connector_event_smoke.sh
+./scripts/supervisory_trace_simulation.sh --sessions 20
+./scripts/supervisory_trace_complex_simulation.sh
+./scripts/cognitive_eval_harness.sh
+```

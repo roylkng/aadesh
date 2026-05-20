@@ -1,8 +1,12 @@
 pub mod cognition;
+pub mod connector_adapter;
 pub mod gemini_wrapper;
 pub mod host_cli;
+pub mod host_wrapper_common;
 pub mod http;
 pub mod kernel;
+pub mod mcp_stdio;
 pub mod modeling;
+pub mod opencode_wrapper;
 pub mod qwen_wrapper;
 pub mod tooling;

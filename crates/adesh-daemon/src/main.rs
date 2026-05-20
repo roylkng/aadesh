@@ -88,6 +88,45 @@ async fn run_cognitive_cli(config: AppConfig, args: &[String]) -> anyhow::Result
                     .context("failed to serialize recall_relevant_memory response")?
             );
         }
+        "store-eval-run" => {
+            let request: adesh_core::ports::storage::EvalRunInput =
+                serde_json::from_str(json_arg).context("invalid store_eval_run payload")?;
+            let response = storage
+                .store_eval_run(request)
+                .await
+                .context("store_eval_run failed")?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&response)
+                    .context("failed to serialize store_eval_run response")?
+            );
+        }
+        "list-eval-runs" => {
+            let request: adesh_core::ports::storage::EvalRunQuery =
+                serde_json::from_str(json_arg).context("invalid list_eval_runs payload")?;
+            let response = storage
+                .list_eval_runs(request)
+                .await
+                .context("list_eval_runs failed")?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&response)
+                    .context("failed to serialize list_eval_runs response")?
+            );
+        }
+        "store-eval-artifact" => {
+            let request: adesh_core::ports::storage::EvalArtifactInput =
+                serde_json::from_str(json_arg).context("invalid store_eval_artifact payload")?;
+            let response = storage
+                .store_eval_artifact(request)
+                .await
+                .context("store_eval_artifact failed")?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&response)
+                    .context("failed to serialize store_eval_artifact response")?
+            );
+        }
         other => bail!("unsupported cognitive subcommand: {other}"),
     }
 

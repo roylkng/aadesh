@@ -135,6 +135,133 @@ pub struct EventAppendInput {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterventionOutcomeInput {
+    pub intervention_id: String,
+    pub episode_id: Option<String>,
+    pub surfaced_direction: String,
+    pub context_ref: Option<String>,
+    pub surfaced_at: DateTime<Utc>,
+    pub selected_response: String,
+    pub modified_payload: Option<String>,
+    pub outcome_ref: Option<String>,
+    pub correction_summary: Option<String>,
+    pub learn_from_this: bool,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterventionOutcomeResponse {
+    pub intervention_id: String,
+    pub episode_id: Option<String>,
+    pub surfaced_direction: String,
+    pub context_ref: Option<String>,
+    pub surfaced_at: DateTime<Utc>,
+    pub selected_response: String,
+    pub modified_payload: Option<String>,
+    pub outcome_ref: Option<String>,
+    pub correction_summary: Option<String>,
+    pub learn_from_this: bool,
+    pub idempotency_key: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterventionContextInput {
+    pub context_id: String,
+    pub scope_type: String,
+    pub scope_key: String,
+    pub task_prompt: String,
+    pub prepared_at: DateTime<Utc>,
+    pub host_agent_id: Option<String>,
+    pub host_agent_kind: Option<String>,
+    pub host_model: Option<String>,
+    pub selected_direction: Option<String>,
+    pub selected_direction_rank: Option<i64>,
+    pub surfaced_directions_json: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterventionContextResponse {
+    pub context_id: String,
+    pub scope_type: String,
+    pub scope_key: String,
+    pub task_prompt: String,
+    pub prepared_at: DateTime<Utc>,
+    pub host_agent_id: Option<String>,
+    pub host_agent_kind: Option<String>,
+    pub host_model: Option<String>,
+    pub selected_direction: Option<String>,
+    pub selected_direction_rank: Option<i64>,
+    pub surfaced_directions_json: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InterventionOutcomeQuery {
+    pub episode_id: Option<String>,
+    pub context_ref: Option<String>,
+    pub learn_from_this: Option<bool>,
+    pub selected_response: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalRunInput {
+    pub run_id: String,
+    pub eval_name: String,
+    pub eval_version: Option<String>,
+    pub run_started_at: DateTime<Utc>,
+    pub run_completed_at: Option<DateTime<Utc>>,
+    pub baseline_summary: Option<String>,
+    pub treatment_summary: Option<String>,
+    pub judge_summary: Option<String>,
+    pub failure_tags: Option<String>,
+    pub promotion_decision: Option<String>,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalRunResponse {
+    pub run_id: String,
+    pub eval_name: String,
+    pub eval_version: Option<String>,
+    pub run_started_at: DateTime<Utc>,
+    pub run_completed_at: Option<DateTime<Utc>>,
+    pub baseline_summary: Option<String>,
+    pub treatment_summary: Option<String>,
+    pub judge_summary: Option<String>,
+    pub failure_tags: Option<String>,
+    pub promotion_decision: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalArtifactInput {
+    pub artifact_id: String,
+    pub run_id: String,
+    pub artifact_kind: String,
+    pub file_path: String,
+    pub mime_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalArtifactResponse {
+    pub artifact_id: String,
+    pub run_id: String,
+    pub artifact_kind: String,
+    pub file_path: String,
+    pub mime_type: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvalRunQuery {
+    pub eval_name: Option<String>,
+    pub eval_version: Option<String>,
+    pub promotion_decision: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReasoningOutputInput {
     pub operation_id: String,
     pub isolation_id: String,
@@ -664,4 +791,55 @@ pub trait StorageProvider: Send + Sync {
         runner_id: &str,
         lease_epoch: i64,
     ) -> Result<(), StorageError>;
+
+    async fn store_intervention_outcome(
+        &self,
+        input: InterventionOutcomeInput,
+    ) -> Result<InterventionOutcomeResponse, StorageError>;
+
+    async fn get_intervention_outcome(
+        &self,
+        intervention_id: &str,
+    ) -> Result<InterventionOutcomeResponse, StorageError>;
+
+    async fn list_intervention_outcomes(
+        &self,
+        query: InterventionOutcomeQuery,
+    ) -> Result<Vec<InterventionOutcomeResponse>, StorageError>;
+
+    async fn store_intervention_context(
+        &self,
+        input: InterventionContextInput,
+    ) -> Result<InterventionContextResponse, StorageError>;
+
+    async fn get_intervention_context(
+        &self,
+        context_id: &str,
+    ) -> Result<InterventionContextResponse, StorageError>;
+
+    async fn find_intervention_contexts(
+        &self,
+        scope_type: &str,
+        scope_key: &str,
+        limit: usize,
+    ) -> Result<Vec<InterventionContextResponse>, StorageError>;
+
+    async fn store_eval_run(&self, input: EvalRunInput) -> Result<EvalRunResponse, StorageError>;
+
+    async fn get_eval_run(&self, run_id: &str) -> Result<EvalRunResponse, StorageError>;
+
+    async fn list_eval_runs(
+        &self,
+        query: EvalRunQuery,
+    ) -> Result<Vec<EvalRunResponse>, StorageError>;
+
+    async fn store_eval_artifact(
+        &self,
+        input: EvalArtifactInput,
+    ) -> Result<EvalArtifactResponse, StorageError>;
+
+    async fn list_eval_artifacts(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<EvalArtifactResponse>, StorageError>;
 }

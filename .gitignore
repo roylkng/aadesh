@@ -9,3 +9,6 @@
 # Runtime/debug noise
 *.log
 .env
+.aadesh/
+
+*.db

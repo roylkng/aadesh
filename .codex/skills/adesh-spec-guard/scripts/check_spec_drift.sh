@@ -15,14 +15,12 @@ run_forbidden_scan() {
   fi
 }
 
-validate_index_root_alignment() {
+validate_root_doc_boundary() {
   if [ ! -f index.md ]; then
     echo "index.md is missing."
     return 1
   fi
 
-  local index_entries
-  index_entries="$(grep -oE '`[^`]+\.md`' index.md | tr -d '`' | sort -u)"
   local root_docs
   root_docs="$(find . -maxdepth 1 -type f -name '*.md' -printf '%f\n' | sort)"
 
@@ -34,23 +32,9 @@ validate_index_root_alignment() {
     case "$doc" in
       README.md|AGENTS.md|index.md) continue ;;
     esac
-    if ! printf '%s\n' "$index_entries" | grep -qx "$doc"; then
-      echo "Unindexed root markdown file: $doc"
-      alignment_ok=1
-    fi
+    echo "Root markdown must be entry-only; move this file under docs/: $doc"
+    alignment_ok=1
   done <<< "$root_docs"
-
-  while IFS= read -r doc; do
-    [ -z "$doc" ] && continue
-    case "$doc" in
-      */*) continue ;;
-      README.md|AGENTS.md|index.md) continue ;;
-    esac
-    if [ ! -f "$doc" ]; then
-      echo "Indexed root markdown file missing from repository root: $doc"
-      alignment_ok=1
-    fi
-  done <<< "$index_entries"
 
   return "$alignment_ok"
 }
@@ -69,8 +53,8 @@ grep -RIn 'pinned_state_version' . --include='*.md' --exclude='README.md' --excl
 run_forbidden_scan "[4/5] prompt/wrapper artifact scan" \
 grep -RInE '^```md|^````md|Goal understood:' . --include='*.md' --exclude-dir='.codex'
 
-echo "[5/7] index and root alignment"
-if ! validate_index_root_alignment; then
+echo "[5/7] index and root/spec alignment"
+if ! validate_root_doc_boundary; then
   found=1
 fi
 
@@ -89,6 +73,23 @@ if [ ! -f docs/DOCS_MAP.md ]; then
 fi
 if [ ! -f docs/CODEBASE_MAP.md ]; then
   echo "Missing docs/CODEBASE_MAP.md"
+  found=1
+fi
+if [ ! -f docs/specs/README.md ]; then
+  echo "Missing docs/specs/README.md"
+  found=1
+fi
+if [ ! -d docs/specs/active ]; then
+  echo "Missing docs/specs/active"
+  found=1
+fi
+if [ ! -d docs/specs/deferred ]; then
+  echo "Missing docs/specs/deferred"
+  found=1
+fi
+if find docs/specs -maxdepth 1 -type f -name '*.md' ! -name 'README.md' | grep -q '.'; then
+  echo "Loose spec markdown found directly under docs/specs; use active/ or deferred/:"
+  find docs/specs -maxdepth 1 -type f -name '*.md' ! -name 'README.md'
   found=1
 fi
 if [ ! -f registry/README.md ]; then
@@ -119,8 +120,8 @@ if find . -maxdepth 1 -type f \
   found=1
 fi
 
-echo "[7/7] root/reference/archive summary"
-find . -maxdepth 2 -type f -name '*.md' | sort
+echo "[7/7] root/spec/reference/archive summary"
+find . -maxdepth 4 -type f -name '*.md' | sort
 
 if [ "$found" -ne 0 ]; then
   echo "Spec drift detected."

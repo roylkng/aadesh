@@ -1,28 +1,28 @@
 # Local Demo Runbook
 
-Purpose: run a reproducible local demo for Adesh OS control-plane behavior using safe defaults.
+Purpose: run a reproducible local demo of the current Aadesh runtime and continuity substrate.
 
-This runbook is product-generic. It does not change canonical behavior specs.
+This runbook is for demos and troubleshooting. It is not a scope-definition document.
+Use `docs/ARCHITECTURE_STATUS.md` and `docs/IMPLEMENTATION_PLAN.md` for scope and priorities.
 
 ## Profiles
 
-### Profile A: Deterministic local demo (recommended)
+### Profile A: deterministic local demo (recommended)
 - model provider: `fake`
 - tool providers: `fake`
 - no external side effects
 
-### Profile B: Live local model demo
+### Profile B: live local model demo
 - model provider: `lm_studio`
-- model endpoint: `http://127.0.0.1:1234`
-- tool providers still `fake` unless intentionally changed
+- endpoint: `http://127.0.0.1:1234`
+- tool providers remain fake unless intentionally changed
 
 ## 1) Prepare configuration
 
 ```bash
 cp .env.example .env
+export ADESH_CARGO_TARGET_DIR=/tmp/adesh-cargo-target
 ```
-
-Adjust `.env` only if needed.
 
 ## 2) Start daemon
 
@@ -30,51 +30,74 @@ Adjust `.env` only if needed.
 ./scripts/demo_start.sh
 ```
 
-## 3) Demo via UI
+## 3) Continuity demo (recommended)
 
-Open `http://127.0.0.1:7777`.
-
-Suggested operator flow:
-1. Submit a low-risk drafting request.
-2. Show operation state and reasoning output.
-3. Show pending approvals list (if any).
-4. Approve one staged action and show syscall status.
-5. Open audit trace and show persisted timeline.
-
-## 4) Demo via CLI
-
-Default non-side-effect check:
+Before-task:
 
 ```bash
-ADESH_ROOT_OWNER_TOKEN=demo-root-owner-token ./scripts/demo_smoke.sh
+cargo run -p adesh-daemon -- host prepare \
+  --task "What matters most right now for this task?" \
+  --task-hint demo-continuity
 ```
 
-Approval/send check:
+After-task:
 
 ```bash
-ADESH_ROOT_OWNER_TOKEN=demo-root-owner-token SMOKE_SCENARIO=send SMOKE_APPROVE_SEND=1 ./scripts/demo_smoke.sh
+cargo run -p adesh-daemon -- host store \
+  --task "Demo continuity task" \
+  --summary "Captured decisions, outcomes, and open loops" \
+  --task-hint demo-continuity
 ```
+
+Connector event demo:
+
+```bash
+./scripts/connector_event_smoke.sh
+```
+
+Standard supervisory trace simulation:
+
+```bash
+./scripts/supervisory_trace_simulation.sh --sessions 20
+```
+
+This produces a deterministic report for two-workspace trace linkage, learnability, and
+accepted/ignored/modified outcome coverage without requiring a live host model.
+
+Complex realism simulation:
+
+```bash
+./scripts/supervisory_trace_complex_simulation.sh
+```
+
+This adds sparse payloads, conflicting/stale memory, duplicate replay, and one controlled
+unlearnable stale-context event.
+
+## 4) Optional control-plane/UI demo
+
+Open `http://127.0.0.1:7777` and run a request lifecycle.
+
+Note:
+- control-plane flows are present in the repo, but broad governed-OS expansion is deferred in current product direction.
 
 ## 5) Expected outcomes
 
-- Health endpoint returns `ok`.
-- Request creates an operation and audit trace.
-- Operation reaches `completed`, `awaiting_approval`, or `blocked` (fail-closed).
-- If approval consumed, syscall status becomes `executed`.
-- Audit trace timeline is non-empty.
+- daemon health is `ok`
+- prepare/store lifecycle succeeds
+- stored episode is queryable in follow-up prepare
+- no audit-fail-open behavior
 
 ## 6) Troubleshooting
 
-- `401` or `403`: token mismatch (`Authorization: Bearer <token>`).
-- `Dependency is unavailable` for model calls:
-  - verify model endpoint and name
-  - increase `ADESH_MODEL_PROVIDER_TIMEOUT_SECONDS` for large local models
-- `blocked` state:
-  - policy/capability gate denied action (expected fail-closed path)
+- `401`/`403`: token mismatch (`Authorization: Bearer <token>`)
+- model dependency unavailable:
+  - verify endpoint/model
+  - raise timeout for local large models
+- blocked state:
+  - expected fail-closed behavior on denied actions
 
-## 7) Exit criteria for a clean demo
+## 7) Exit criteria
 
-- At least one request lifecycle shown end-to-end.
-- At least one audit trace displayed.
-- No duplicate side effects under retries.
-- No audit-fail-open behavior.
+- one full before-task + after-task continuity loop completed
+- connector smoke completed
+- no duplicate side effects under retries

@@ -722,6 +722,71 @@ pub struct RecallRelevantMemoryResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectorEventKind {
+    TaskStart,
+    TaskCheckpoint,
+    TaskEnd,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorEventRequest {
+    pub connector_id: String,
+    pub connector_kind: String,
+    pub connector_version: Option<String>,
+    pub session_id: Option<String>,
+    pub host_agent_id: Option<String>,
+    pub host_agent_kind: Option<String>,
+    pub host_model: Option<String>,
+    pub context_id: Option<String>,
+    pub selected_next_direction: Option<String>,
+    pub outcome: Option<String>,
+    pub correction_summary: Option<String>,
+    pub event_kind: ConnectorEventKind,
+    pub workspace: WorkspaceDescriptor,
+    pub task_prompt: String,
+    #[serde(default)]
+    pub files_in_focus: Vec<String>,
+    pub task_hint: Option<String>,
+    pub summary: Option<String>,
+    #[serde(default)]
+    pub files_touched: Vec<String>,
+    #[serde(default)]
+    pub tests: Vec<WorkEpisodeTestResult>,
+    #[serde(default)]
+    pub decisions: Vec<WorkEpisodeDecision>,
+    #[serde(default)]
+    pub unresolved_items: Vec<String>,
+    #[serde(default)]
+    pub observed_preferences: Vec<String>,
+    #[serde(default)]
+    pub risk_signals: Vec<String>,
+    #[serde(default)]
+    pub issue_refs: Vec<String>,
+    #[serde(default)]
+    pub artifact_refs: Vec<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub ended_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorEventResponse {
+    pub connector_id: String,
+    pub connector_kind: String,
+    pub connector_version: Option<String>,
+    pub session_id: Option<String>,
+    pub event_kind: ConnectorEventKind,
+    pub handled_as: String,
+    pub context_id: Option<String>,
+    pub prepare_context: Option<PrepareTaskContextResponse>,
+    pub stored_episode: Option<WorkEpisodeResponse>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryClaimEvidence {
     pub evidence_ref: String,

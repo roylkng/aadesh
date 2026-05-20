@@ -1,15 +1,14 @@
 use std::{
-    path::Path,
-    process::{Command, Stdio},
+    env,
+    path::{Path, PathBuf},
+    process::Command,
 };
 
-use adesh_contracts::{
-    NextDirectionItem, PrepareTaskContextResponse, RiskFlagItem, ScopedGuidanceItem,
-};
+use adesh_contracts::PrepareTaskContextResponse;
 use adesh_core::ports::storage::StorageProvider;
 use anyhow::{Context, bail};
 
-use crate::{cognition, host_cli};
+use crate::{cognition, host_cli, host_wrapper_common};
 
 pub async fn run_qwen_host_cli<S: StorageProvider + ?Sized>(
     storage: &S,
@@ -30,7 +29,7 @@ pub async fn run_qwen_host_cli<S: StorageProvider + ?Sized>(
                 storage,
                 &args[1..],
                 current_dir,
-                qwen_binary_path().as_path(),
+                resolve_qwen_binary_path()?.as_path(),
             )
             .await?;
         }
@@ -69,13 +68,13 @@ pub async fn run_qwen_command_with_binary<S: StorageProvider + ?Sized>(
     current_dir: Option<&Path>,
     qwen_binary: &Path,
 ) -> anyhow::Result<()> {
-    let (host_args, qwen_args) = split_passthrough_args(args);
+    let (host_args, qwen_args) = host_wrapper_common::split_passthrough_args(args);
     let prompt = prepare_qwen_prompt(storage, &host_args, current_dir).await?;
     invoke_qwen_cli(
         qwen_binary,
         &prompt,
         &qwen_args,
-        resolved_command_cwd(&host_args, current_dir).as_deref(),
+        host_wrapper_common::resolved_command_cwd(&host_args, current_dir).as_deref(),
     )
 }
 
@@ -89,38 +88,8 @@ pub fn render_qwen_prompt(task_prompt: &str, response: &PrepareTaskContextRespon
         "Current task:".to_string(),
         task_prompt.trim().to_string(),
         String::new(),
-        "Aadesh context:".to_string(),
-        format!(
-            "- Workspace: {} ({}, confidence {:.2})",
-            response.workspace_resolution.resolved_scope_key,
-            response.workspace_resolution.scope_type,
-            response.workspace_resolution.confidence
-        ),
-        format!("- Task focus: {}", response.task_focus.trim()),
     ];
-
-    sections.extend(render_guidance_section(
-        "Relevant decisions",
-        &response.relevant_decisions,
-    ));
-    sections.extend(render_guidance_section(
-        "Applicable preferences",
-        &response.applicable_preferences,
-    ));
-    sections.extend(render_guidance_section("Open loops", &response.open_loops));
-    sections.extend(render_risk_section("Risk flags", &response.risk_flags));
-    sections.extend(render_direction_section(
-        "Likely next directions",
-        &response.likely_next_directions,
-    ));
-
-    if !response.uncertainties.is_empty() {
-        sections.push("Uncertainties:".to_string());
-        for item in response.uncertainties.iter().take(3) {
-            sections.push(format!("- {}", item.trim()));
-        }
-    }
-
+    host_wrapper_common::append_standard_context_sections(&mut sections, response);
     sections.push(String::new());
     sections.push("Respond to the current task directly. Keep the answer compact, practical, and grounded in the workspace context above.".to_string());
     sections.join("\n")
@@ -132,157 +101,97 @@ pub fn invoke_qwen_cli(
     qwen_args: &[String],
     cwd: Option<&Path>,
 ) -> anyhow::Result<()> {
-    let mut command = Command::new(qwen_binary);
-    if let Some(cwd) = cwd {
-        command.current_dir(cwd);
-    }
-    command
-        .arg("--prompt")
-        .arg(prompt)
-        .args(qwen_args)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+    host_wrapper_common::invoke_prompt_cli(qwen_binary, prompt, qwen_args, cwd, "Qwen")
+}
 
-    let status = command
-        .status()
-        .with_context(|| format!("failed to invoke Qwen CLI at {}", qwen_binary.display()))?;
-    if !status.success() {
-        bail!("Qwen CLI exited with status {status}");
+pub fn resolve_qwen_binary_path() -> anyhow::Result<PathBuf> {
+    let configured = env::var_os("ADESH_QWEN_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("qwen"));
+    let resolved = if configured.components().count() > 1 || configured.is_absolute() {
+        configured
+    } else {
+        host_wrapper_common::find_binary_in_path(&configured).unwrap_or(configured)
+    };
+
+    if !resolved.exists() {
+        bail!(
+            "Qwen CLI binary was not found at {}. Install Qwen Code or set ADESH_QWEN_BIN to the correct binary path.",
+            resolved.display()
+        );
     }
+    if !resolved.is_file() {
+        bail!(
+            "Qwen CLI path {} is not a file. Set ADESH_QWEN_BIN to the Qwen executable.",
+            resolved.display()
+        );
+    }
+
+    validate_qwen_binary(&resolved)?;
+    Ok(resolved)
+}
+
+fn validate_qwen_binary(binary: &Path) -> anyhow::Result<()> {
+    let output = Command::new(binary)
+        .arg("--help")
+        .output()
+        .with_context(|| format!("failed to invoke Qwen CLI help at {}", binary.display()))?;
+    if !output.status.success() {
+        bail!(
+            "Qwen CLI at {} did not respond to --help successfully. Verify that the binary is a working Qwen Code installation.",
+            binary.display()
+        );
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}\n{stderr}");
+    if !combined.contains("--prompt") {
+        bail!(
+            "Binary at {} does not look like a compatible Qwen CLI. Expected --help output to mention the --prompt flag.",
+            binary.display()
+        );
+    }
+
     Ok(())
-}
-
-pub fn qwen_binary_path() -> std::path::PathBuf {
-    std::env::var_os("ADESH_QWEN_BIN")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from("qwen"))
-}
-
-fn resolved_command_cwd(args: &[String], current_dir: Option<&Path>) -> Option<std::path::PathBuf> {
-    let request = host_cli::build_prepare_request(args, current_dir).ok()?;
-    request
-        .workspace
-        .cwd
-        .as_ref()
-        .map(std::path::PathBuf::from)
-        .or_else(|| current_dir.map(Path::to_path_buf))
-}
-
-fn split_passthrough_args(args: &[String]) -> (Vec<String>, Vec<String>) {
-    if let Some(index) = args.iter().position(|arg| arg == "--") {
-        (args[..index].to_vec(), args[index + 1..].to_vec())
-    } else {
-        (args.to_vec(), Vec::new())
-    }
-}
-
-fn render_guidance_section(title: &str, items: &[ScopedGuidanceItem]) -> Vec<String> {
-    render_section(
-        title,
-        items.iter().map(|item| {
-            format_guidance_line(
-                &item.statement,
-                item.confidence,
-                &item.basis,
-                &item.evidence_refs,
-            )
-        }),
-    )
-}
-
-fn render_risk_section(title: &str, items: &[RiskFlagItem]) -> Vec<String> {
-    render_section(
-        title,
-        items.iter().map(|item| {
-            format!(
-                "{} [severity={}, confidence={:.2}; basis={}; evidence={}]",
-                item.statement.trim(),
-                item.severity,
-                item.confidence,
-                compact_text(&item.basis),
-                compact_evidence(&item.evidence_refs),
-            )
-        }),
-    )
-}
-
-fn render_direction_section(title: &str, items: &[NextDirectionItem]) -> Vec<String> {
-    render_section(
-        title,
-        items.iter().map(|item| {
-            format_guidance_line(
-                &item.statement,
-                item.confidence,
-                &item.basis,
-                &item.evidence_refs,
-            )
-        }),
-    )
-}
-
-fn render_section<I>(title: &str, items: I) -> Vec<String>
-where
-    I: IntoIterator<Item = String>,
-{
-    let collected = items.into_iter().take(3).collect::<Vec<_>>();
-    if collected.is_empty() {
-        return Vec::new();
-    }
-    let mut lines = Vec::with_capacity(collected.len() + 1);
-    lines.push(format!("{title}:"));
-    for item in collected {
-        lines.push(format!("- {item}"));
-    }
-    lines
-}
-
-fn format_guidance_line(
-    statement: &str,
-    confidence: f64,
-    basis: &str,
-    evidence_refs: &[String],
-) -> String {
-    format!(
-        "{} [confidence={:.2}; basis={}; evidence={}]",
-        statement.trim(),
-        confidence,
-        compact_text(basis),
-        compact_evidence(evidence_refs),
-    )
-}
-
-fn compact_text(text: &str) -> String {
-    let mut normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if normalized.len() > 120 {
-        normalized.truncate(117);
-        normalized.push_str("...");
-    }
-    normalized
-}
-
-fn compact_evidence(evidence_refs: &[String]) -> String {
-    if evidence_refs.is_empty() {
-        return "none".to_string();
-    }
-    let joined = evidence_refs
-        .iter()
-        .take(3)
-        .map(|item| item.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    if evidence_refs.len() > 3 {
-        format!("{joined}, ...")
-    } else {
-        joined
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use adesh_contracts::{PrepareTaskContextResponse, WorkspaceResolutionResponse};
+    use std::{
+        ffi::OsStr,
+        fs,
+        sync::{Mutex, OnceLock},
+    };
 
-    use super::render_qwen_prompt;
+    use super::{render_qwen_prompt, resolve_qwen_binary_path};
+
+    fn qwen_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn with_qwen_bin<T>(value: impl AsRef<OsStr>, f: impl FnOnce() -> T) -> T {
+        let _guard = qwen_env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let old = std::env::var_os("ADESH_QWEN_BIN");
+        unsafe {
+            std::env::set_var("ADESH_QWEN_BIN", value);
+        }
+        let result = f();
+        if let Some(value) = old {
+            unsafe {
+                std::env::set_var("ADESH_QWEN_BIN", value);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("ADESH_QWEN_BIN");
+            }
+        }
+        result
+    }
 
     #[test]
     fn render_qwen_prompt_includes_current_task_and_ranked_sections() {
@@ -326,5 +235,61 @@ mod tests {
         assert!(prompt.contains("Relevant decisions:"));
         assert!(prompt.contains("Likely next directions:"));
         assert!(prompt.contains("Run a real benchmark before expanding the surface."));
+    }
+
+    #[test]
+    fn resolve_qwen_binary_path_rejects_missing_binary_with_actionable_error() {
+        let err = with_qwen_bin("/tmp/adesh-missing-qwen-binary", || {
+            resolve_qwen_binary_path().unwrap_err().to_string()
+        });
+        assert!(err.contains("ADESH_QWEN_BIN"));
+        assert!(err.contains("Install Qwen Code"));
+    }
+
+    #[test]
+    fn resolve_qwen_binary_path_rejects_incompatible_binary() {
+        let dir = std::env::temp_dir().join("adesh-qwen-incompatible-binary");
+        let _ = fs::create_dir_all(&dir);
+        let fake = dir.join("qwen");
+        fs::write(
+            &fake,
+            "#!/usr/bin/env bash\nset -euo pipefail\necho 'not qwen help'\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&fake).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&fake, perms).unwrap();
+        }
+
+        let err = with_qwen_bin(&fake, || {
+            resolve_qwen_binary_path().unwrap_err().to_string()
+        });
+        assert!(err.contains("does not look like a compatible Qwen CLI"));
+        assert!(err.contains("--prompt"));
+    }
+
+    #[test]
+    fn resolve_qwen_binary_path_accepts_help_without_branding_when_prompt_flag_exists() {
+        let dir = std::env::temp_dir().join("adesh-qwen-compatible-binary");
+        let _ = fs::create_dir_all(&dir);
+        let fake = dir.join("qwen");
+        fs::write(
+            &fake,
+            "#!/usr/bin/env bash\nset -euo pipefail\nif [ \"${1:-}\" = \"--help\" ]; then\n  echo 'Usage: qwen [options]'\n  echo '  -p, --prompt  Prompt text'\n  exit 0\nfi\nexit 1\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&fake).unwrap().permissions();
+            perms.set_mode(0o755);
+            fs::set_permissions(&fake, perms).unwrap();
+        }
+
+        let resolved = with_qwen_bin(&fake, || resolve_qwen_binary_path().unwrap());
+        assert_eq!(resolved, fake);
     }
 }

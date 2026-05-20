@@ -9,9 +9,10 @@ use adesh_contracts::{
 use adesh_core::{
     AppError,
     ports::storage::{
-        MemoryClaimEvidenceInput, MemoryClaimQuery, MemoryClaimUpsertInput, SearchDocumentQuery,
-        SearchDocumentUpsertInput, StorageProvider, WorkEpisodeDecisionInput, WorkEpisodeListQuery,
-        WorkEpisodeStoreInput, WorkEpisodeTestResultInput,
+        InterventionOutcomeQuery, MemoryClaimEvidenceInput, MemoryClaimQuery,
+        MemoryClaimUpsertInput, SearchDocumentQuery, SearchDocumentUpsertInput, StorageProvider,
+        WorkEpisodeDecisionInput, WorkEpisodeListQuery, WorkEpisodeStoreInput,
+        WorkEpisodeTestResultInput,
     },
 };
 use chrono::Utc;
@@ -27,6 +28,7 @@ struct RankingContext<'a> {
     files_in_focus: &'a [String],
     intent_mode: PromptIntentMode,
     now: chrono::DateTime<Utc>,
+    outcome_profile: &'a OutcomeProfile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +45,16 @@ enum PromptIntentMode {
 struct RankedClaim {
     score: i64,
     claim: MemoryClaimRecord,
+}
+
+#[derive(Debug, Default, Clone)]
+struct OutcomeProfile {
+    accepted_count: usize,
+    ignored_count: usize,
+    modified_count: usize,
+    accepted_tokens: HashSet<String>,
+    ignored_tokens: HashSet<String>,
+    modified_tokens: HashSet<String>,
 }
 
 pub async fn store_work_episode<S: StorageProvider + ?Sized>(
@@ -437,6 +449,15 @@ pub async fn prepare_task_context<S: StorageProvider + ?Sized>(
             }
         }
     }
+    let query_tokens = build_query_tokens(&request.task_prompt, &request.files_in_focus);
+    let intent_mode = classify_prompt_intent(&request.task_prompt);
+    let related_task_scope_keys = related_task_scope_keys(
+        derived_task_scope.as_deref(),
+        &recent_episodes,
+        &search_hits,
+        &query_tokens,
+        intent_mode,
+    );
 
     let mut claims = storage
         .list_memory_claims(MemoryClaimQuery {
@@ -457,7 +478,7 @@ pub async fn prepare_task_context<S: StorageProvider + ?Sized>(
         })
         .await?;
     claims.append(&mut user_global_claims);
-    if let Some(task_scope_key) = derived_task_scope.as_ref() {
+    for task_scope_key in &related_task_scope_keys {
         let mut task_claims = storage
             .list_memory_claims(MemoryClaimQuery {
                 scope_type: Some("task_or_workstream".to_string()),
@@ -479,7 +500,7 @@ pub async fn prepare_task_context<S: StorageProvider + ?Sized>(
             limit: Some(100),
         })
         .await?;
-    if let Some(task_scope_key) = derived_task_scope.as_ref() {
+    for task_scope_key in &related_task_scope_keys {
         let mut task_candidates = storage
             .list_memory_claims(MemoryClaimQuery {
                 scope_type: Some("task_or_workstream".to_string()),
@@ -503,13 +524,20 @@ pub async fn prepare_task_context<S: StorageProvider + ?Sized>(
     candidate_claims.append(&mut global_candidates);
     let candidate_claims = dedupe_claims(candidate_claims);
 
-    let query_tokens = build_query_tokens(&request.task_prompt, &request.files_in_focus);
+    let outcome_profile = collect_workspace_outcome_profile(
+        storage,
+        "workspace",
+        &workspace_resolution.resolved_scope_key,
+    )
+    .await?;
+
     let ranking = RankingContext {
         query_tokens: &query_tokens,
         task_scope_key: derived_task_scope.as_deref(),
         files_in_focus: &request.files_in_focus,
-        intent_mode: classify_prompt_intent(&request.task_prompt),
+        intent_mode,
         now: Utc::now(),
+        outcome_profile: &outcome_profile,
     };
     let ranked_decisions = rank_claims(&claims, "decision", &ranking);
     let ranked_preferences = rank_claims(&claims, "preference", &ranking);
@@ -565,6 +593,11 @@ pub async fn prepare_task_context<S: StorageProvider + ?Sized>(
         &selected_risks,
         &selected_decisions,
         &selected_preferences,
+        &query_tokens,
+        intent_mode,
+        outcome_profile.accepted_count,
+        outcome_profile.ignored_count,
+        outcome_profile.modified_count,
     );
 
     let task_focus = select_task_focus(
@@ -572,7 +605,7 @@ pub async fn prepare_task_context<S: StorageProvider + ?Sized>(
         derived_task_scope.as_deref(),
         &request.files_in_focus,
         &query_tokens,
-        ranking.intent_mode,
+        intent_mode,
         &recent_episodes,
         &search_hits,
     );
@@ -657,12 +690,14 @@ pub async fn recall_relevant_memory<S: StorageProvider + ?Sized>(
         .as_deref()
         .map(normalize_key)
         .map(|value| format!("task:hint:{value}"));
+    let empty_outcome_profile = OutcomeProfile::default();
     let ranking = RankingContext {
         query_tokens: &query_tokens,
         task_scope_key: derived_task_scope.as_deref(),
         files_in_focus: &[],
         intent_mode: classify_prompt_intent(&request.query),
         now: Utc::now(),
+        outcome_profile: &empty_outcome_profile,
     };
     let mut ranked = rank_flat_memories(&claims, &ranking);
     ranked.truncate(usize::try_from(request.limit.unwrap_or(8)).unwrap_or(8));
@@ -798,6 +833,83 @@ async fn search_workspace_documents<S: StorageProvider + ?Sized>(
         }
     }
     Ok(hits)
+}
+
+fn related_task_scope_keys(
+    derived_task_scope: Option<&str>,
+    recent_episodes: &[WorkEpisodeResponse],
+    search_hits: &[adesh_contracts::SearchDocumentHit],
+    query_tokens: &[String],
+    intent_mode: PromptIntentMode,
+) -> Vec<String> {
+    let token_set = query_tokens.iter().cloned().collect::<HashSet<_>>();
+    let mut scores: BTreeMap<String, i64> = BTreeMap::new();
+
+    if let Some(scope) = derived_task_scope {
+        scores.insert(scope.to_string(), 1_000);
+    }
+
+    let search_refs = search_hits
+        .iter()
+        .filter(|hit| hit.source_type == "work_episode" || hit.source_type == "episode")
+        .map(|hit| hit.source_ref.as_str())
+        .collect::<HashSet<_>>();
+
+    for episode in recent_episodes {
+        let Some(scope) = episode.task_scope_key.as_ref() else {
+            continue;
+        };
+        let mut text = format!("{} {}", episode.task_prompt, episode.summary);
+        for decision in &episode.decisions {
+            text.push(' ');
+            text.push_str(&decision.decision);
+            if let Some(rationale) = decision.rationale.as_ref() {
+                text.push(' ');
+                text.push_str(rationale);
+            }
+        }
+        for item in &episode.unresolved_items {
+            text.push(' ');
+            text.push_str(item);
+        }
+        for item in &episode.risk_signals {
+            text.push(' ');
+            text.push_str(item);
+        }
+
+        let overlap = build_query_tokens(&text, &episode.files_touched)
+            .into_iter()
+            .filter(|token| token_set.contains(token))
+            .count() as i64;
+        let mut score = overlap * 10;
+        score += task_focus_intent_bonus(&episode.task_prompt, &episode.summary, intent_mode);
+        if search_refs.contains(episode.episode_id.as_str()) {
+            score += 18;
+        }
+        if Utc::now().signed_duration_since(episode.created_at) < chrono::Duration::days(1) {
+            score += 4;
+        }
+
+        let minimum_score = match intent_mode {
+            PromptIntentMode::ValidationProof => 18,
+            PromptIntentMode::Debugging => 18,
+            _ => 24,
+        };
+        if derived_task_scope == Some(scope.as_str()) || score >= minimum_score {
+            scores
+                .entry(scope.clone())
+                .and_modify(|existing| *existing = (*existing).max(score))
+                .or_insert(score);
+        }
+    }
+
+    let mut ranked = scores.into_iter().collect::<Vec<_>>();
+    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    ranked
+        .into_iter()
+        .map(|(scope, _)| scope)
+        .take(MAX_GUIDANCE_ITEMS)
+        .collect()
 }
 
 async fn upsert_memory_statement<S: StorageProvider + ?Sized>(
@@ -993,6 +1105,8 @@ fn rank_claims(
             } else {
                 0
             };
+            let outcome_boost =
+                outcome_boost_bonus_for_claim(&statement_tokens, ranking.outcome_profile);
             let score = category_bonus
                 + scope_bonus
                 + overlap * 12
@@ -1002,7 +1116,8 @@ fn rank_claims(
                 + evidence_bonus
                 + actionability_bonus
                 + intent_bonus
-                + recency_bonus;
+                + recency_bonus
+                + outcome_boost;
             RankedClaim {
                 score,
                 claim: claim.clone(),
@@ -1090,83 +1205,217 @@ fn build_next_directions(
     risks: &[MemoryClaimRecord],
     decisions: &[MemoryClaimRecord],
     preferences: &[MemoryClaimRecord],
+    query_tokens: &[String],
+    intent_mode: PromptIntentMode,
+    accepted_outcomes: usize,
+    ignored_outcomes: usize,
+    modified_outcomes: usize,
 ) -> Vec<NextDirectionItem> {
+    let outcome_basis =
+        build_outcome_basis_by_counts(accepted_outcomes, ignored_outcomes, modified_outcomes);
     let mut items = Vec::new();
-    if let Some(open_loop) = open_loops.first() {
+    let risk_first = should_prioritize_risk_direction(
+        risks.first(),
+        open_loops.first(),
+        query_tokens,
+        intent_mode,
+    );
+
+    if risk_first {
+        if let Some(risk) = risks.first() {
+            let mut evidence_refs: Vec<String> = risk
+                .evidence
+                .iter()
+                .map(|item| item.evidence_ref.clone())
+                .collect();
+            if accepted_outcomes > 0 {
+                evidence_refs.push(format!("intervention:accepted={}", accepted_outcomes));
+            }
+            let mut basis =
+                "Current prompt asks about risk, contingency, or safety; using the top matching risk as the first action".to_string();
+            if !outcome_basis.is_empty() {
+                basis.push_str(" | ");
+                basis.push_str(&outcome_basis.join("; "));
+            }
+            items.push(NextDirectionItem {
+                statement: format!(
+                    "Close the concrete safety gap behind this risk: {}",
+                    claim_statement(risk)
+                ),
+                confidence: risk.confidence,
+                evidence_refs,
+                basis,
+            });
+        }
+    } else if let Some(open_loop) = open_loops.first() {
+        let mut evidence_refs: Vec<String> = open_loop
+            .evidence
+            .iter()
+            .map(|item| item.evidence_ref.clone())
+            .collect();
+        if accepted_outcomes > 0 {
+            evidence_refs.push(format!("intervention:accepted={}", accepted_outcomes));
+        }
+        let mut basis = actionable_basis(open_loop, risks);
+        if !outcome_basis.is_empty() {
+            basis.push_str(" | ");
+            basis.push_str(&outcome_basis.join("; "));
+        }
         items.push(NextDirectionItem {
             statement: format!(
                 "Start with the most actionable open item: {}",
                 claim_statement(open_loop)
             ),
             confidence: open_loop.confidence,
-            evidence_refs: open_loop
-                .evidence
-                .iter()
-                .map(|item| item.evidence_ref.clone())
-                .collect(),
-            basis: actionable_basis(open_loop, risks),
+            evidence_refs,
+            basis,
         });
     } else if let Some(risk) = risks.first() {
+        let mut evidence_refs: Vec<String> = risk
+            .evidence
+            .iter()
+            .map(|item| item.evidence_ref.clone())
+            .collect();
+        if accepted_outcomes > 0 {
+            evidence_refs.push(format!("intervention:accepted={}", accepted_outcomes));
+        }
+        let mut basis = "Highest-ranked risk with no stronger unresolved work item".to_string();
+        if !outcome_basis.is_empty() {
+            basis.push_str(" | ");
+            basis.push_str(&outcome_basis.join("; "));
+        }
         items.push(NextDirectionItem {
             statement: format!(
                 "Close the concrete safety gap behind this risk: {}",
                 claim_statement(risk)
             ),
             confidence: risk.confidence,
-            evidence_refs: risk
-                .evidence
-                .iter()
-                .map(|item| item.evidence_ref.clone())
-                .collect(),
-            basis: "Highest-ranked risk with no stronger unresolved work item".to_string(),
+            evidence_refs,
+            basis,
         });
     }
 
     if let Some(decision) = decisions.first() {
+        let mut evidence_refs: Vec<String> = decision
+            .evidence
+            .iter()
+            .map(|item| item.evidence_ref.clone())
+            .collect();
+        if accepted_outcomes > 0 {
+            evidence_refs.push(format!("intervention:accepted={}", accepted_outcomes));
+        }
+        if ignored_outcomes > 0 {
+            evidence_refs.push(format!("intervention:ignored={}", ignored_outcomes));
+        }
+        if modified_outcomes > 0 {
+            evidence_refs.push(format!("intervention:modified={}", modified_outcomes));
+        }
+        let mut basis = "Relevant prior decision".to_string();
+        if !outcome_basis.is_empty() {
+            basis.push_str(" | ");
+            basis.push_str(&outcome_basis.join("; "));
+        }
         items.push(NextDirectionItem {
             statement: format!(
                 "Keep this constraint in place while changing the code: {}",
                 claim_statement(decision)
             ),
             confidence: decision.confidence,
-            evidence_refs: decision
-                .evidence
-                .iter()
-                .map(|item| item.evidence_ref.clone())
-                .collect(),
-            basis: "Relevant prior decision".to_string(),
+            evidence_refs,
+            basis,
         });
     } else if let Some(preference) = preferences.first() {
+        let mut evidence_refs: Vec<String> = preference
+            .evidence
+            .iter()
+            .map(|item| item.evidence_ref.clone())
+            .collect();
+        if accepted_outcomes > 0 {
+            evidence_refs.push(format!("intervention:accepted={}", accepted_outcomes));
+        }
+        if ignored_outcomes > 0 {
+            evidence_refs.push(format!("intervention:ignored={}", ignored_outcomes));
+        }
+        if modified_outcomes > 0 {
+            evidence_refs.push(format!("intervention:modified={}", modified_outcomes));
+        }
+        let mut basis = "Relevant observed preference".to_string();
+        if !outcome_basis.is_empty() {
+            basis.push_str(" | ");
+            basis.push_str(&outcome_basis.join("; "));
+        }
         items.push(NextDirectionItem {
             statement: format!(
                 "Maintain the strongest observed preference here: {}",
                 claim_statement(preference)
             ),
             confidence: preference.confidence,
-            evidence_refs: preference
-                .evidence
-                .iter()
-                .map(|item| item.evidence_ref.clone())
-                .collect(),
-            basis: "Relevant observed preference".to_string(),
+            evidence_refs,
+            basis,
         });
     }
 
     if open_loops.len() > 1 {
         let secondary = &open_loops[1];
+        let mut evidence_refs: Vec<String> = secondary
+            .evidence
+            .iter()
+            .map(|item| item.evidence_ref.clone())
+            .collect();
+        if accepted_outcomes > 0 {
+            evidence_refs.push(format!("intervention:accepted={}", accepted_outcomes));
+        }
+        if ignored_outcomes > 0 {
+            evidence_refs.push(format!("intervention:ignored={}", ignored_outcomes));
+        }
+        if modified_outcomes > 0 {
+            evidence_refs.push(format!("intervention:modified={}", modified_outcomes));
+        }
+        let mut basis = "Secondary ranked unresolved item".to_string();
+        if !outcome_basis.is_empty() {
+            basis.push_str(" | ");
+            basis.push_str(&outcome_basis.join("; "));
+        }
         items.push(NextDirectionItem {
             statement: format!("Then follow up on: {}", claim_statement(secondary)),
             confidence: secondary.confidence * 0.95,
-            evidence_refs: secondary
-                .evidence
-                .iter()
-                .map(|item| item.evidence_ref.clone())
-                .collect(),
-            basis: "Secondary ranked unresolved item".to_string(),
+            evidence_refs,
+            basis,
         });
     }
 
     dedupe_next_directions(items)
+}
+
+fn should_prioritize_risk_direction(
+    risk: Option<&MemoryClaimRecord>,
+    open_loop: Option<&MemoryClaimRecord>,
+    query_tokens: &[String],
+    intent_mode: PromptIntentMode,
+) -> bool {
+    let Some(risk) = risk else {
+        return false;
+    };
+    let risk_tokens = build_query_tokens(claim_statement(risk), &[]);
+    let token_set = query_tokens.iter().cloned().collect::<HashSet<_>>();
+    let overlap = risk_tokens
+        .iter()
+        .filter(|token| token_set.contains(token.as_str()))
+        .count();
+    let query_mentions_risk = query_tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "risk" | "risky" | "safety" | "safe" | "unsafe" | "fallback" | "happen"
+        )
+    });
+    let debugging_intent_supports_risk = matches!(intent_mode, PromptIntentMode::Debugging);
+    let risk_duplicates_open_loop = open_loop
+        .map(|item| statements_materially_overlap(claim_statement(item), claim_statement(risk)))
+        .unwrap_or(false);
+
+    (query_mentions_risk || debugging_intent_supports_risk)
+        && overlap >= 2
+        && (!risk_duplicates_open_loop || query_mentions_risk)
 }
 
 fn rank_flat_memories(
@@ -1518,6 +1767,14 @@ fn intent_alignment_bonus(claim: &MemoryClaimRecord, intent_mode: PromptIntentMo
                         "real_use",
                         "real_task",
                         "harness",
+                        "timeout",
+                        "coverage",
+                        "evidence",
+                        "safety",
+                        "risk",
+                        "incident",
+                        "failing",
+                        "failure",
                     ],
                     8,
                 );
@@ -1676,6 +1933,11 @@ fn classify_prompt_intent(prompt: &str) -> PromptIntentMode {
         "regression",
         "broken",
         "crash",
+        "risk",
+        "risky",
+        "safety",
+        "unsafe",
+        "fallback",
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
@@ -1788,6 +2050,119 @@ fn recency_bonus(claim: &MemoryClaimRecord, now: chrono::DateTime<Utc>) -> i64 {
     } else {
         0
     }
+}
+
+fn outcome_boost_bonus_for_claim(
+    statement_tokens: &[String],
+    outcome_profile: &OutcomeProfile,
+) -> i64 {
+    let accepted_outcomes = outcome_profile.accepted_count;
+    let ignored_outcomes = outcome_profile.ignored_count;
+    let modified_outcomes = outcome_profile.modified_count;
+    let total = accepted_outcomes + ignored_outcomes + modified_outcomes;
+    if total == 0 {
+        return 0;
+    }
+    let accepted_overlap = statement_tokens
+        .iter()
+        .filter(|token| outcome_profile.accepted_tokens.contains(token.as_str()))
+        .count() as i64;
+    let ignored_overlap = statement_tokens
+        .iter()
+        .filter(|token| outcome_profile.ignored_tokens.contains(token.as_str()))
+        .count() as i64;
+    let modified_overlap = statement_tokens
+        .iter()
+        .filter(|token| outcome_profile.modified_tokens.contains(token.as_str()))
+        .count() as i64;
+
+    if accepted_overlap == 0 && ignored_overlap == 0 && modified_overlap == 0 {
+        return 0;
+    }
+
+    let accept_rate = accepted_outcomes as f64 / total as f64;
+    let mut bonus = 0i64;
+    if accepted_overlap > 0 && accepted_outcomes > 0 {
+        bonus += 6.min(accepted_overlap * 2);
+        bonus += 4.min(accepted_outcomes as i64 / 2);
+    }
+    if accepted_overlap > 0 && accept_rate > 0.7 && accepted_outcomes >= 2 {
+        bonus += 8;
+    } else if accepted_overlap > 0 && accept_rate > 0.5 && accepted_outcomes >= 1 {
+        bonus += 3;
+    }
+    if ignored_overlap > accepted_overlap {
+        bonus -= 2;
+    }
+    if modified_overlap > 0 && modified_outcomes > 0 {
+        bonus += 2.min(modified_overlap);
+    }
+    bonus
+}
+
+async fn collect_workspace_outcome_profile<S: StorageProvider + ?Sized>(
+    storage: &S,
+    scope_type: &str,
+    scope_key: &str,
+) -> Result<OutcomeProfile, AppError> {
+    let contexts = storage
+        .find_intervention_contexts(scope_type, scope_key, 200)
+        .await?;
+
+    let mut profile = OutcomeProfile::default();
+    for context in contexts {
+        let outcomes = storage
+            .list_intervention_outcomes(InterventionOutcomeQuery {
+                episode_id: None,
+                context_ref: Some(context.context_id),
+                learn_from_this: Some(true),
+                selected_response: None,
+            })
+            .await?;
+        for outcome in outcomes {
+            let mut joined_text = outcome.surfaced_direction.clone();
+            if let Some(correction) = outcome.correction_summary.as_ref() {
+                joined_text.push(' ');
+                joined_text.push_str(correction);
+            }
+            let tokens = build_query_tokens(&joined_text, &[]);
+            match outcome.selected_response.as_str() {
+                "accepted" => {
+                    profile.accepted_count += 1;
+                    profile.accepted_tokens.extend(tokens);
+                }
+                "ignored" => {
+                    profile.ignored_count += 1;
+                    profile.ignored_tokens.extend(tokens);
+                }
+                "modified" => {
+                    profile.modified_count += 1;
+                    profile.modified_tokens.extend(tokens);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(profile)
+}
+
+fn build_outcome_basis_by_counts(
+    accepted_outcomes: usize,
+    ignored_outcomes: usize,
+    modified_outcomes: usize,
+) -> Vec<String> {
+    let mut basis = Vec::new();
+    if accepted_outcomes > 0 {
+        basis.push(format!("{} accepted", accepted_outcomes));
+    }
+    if modified_outcomes > 0 {
+        basis.push(format!("{} modified", modified_outcomes));
+    }
+    if ignored_outcomes > accepted_outcomes {
+        basis.push("ignored > accepted".to_string());
+    }
+    basis
 }
 
 fn signal_count(claim: &MemoryClaimRecord) -> u32 {

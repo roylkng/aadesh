@@ -1,127 +1,139 @@
 # Repository Organization Contract
 
-Status: Process contract for repository layout and contribution hygiene.
-Scope: Humans and coding agents working in this repository.
+Status: process contract for repository layout and contribution hygiene.
+Scope: humans and coding agents working in this repository.
 
 This document defines where content belongs and what checks must pass before behavior-changing work proceeds.
 
-## 1) Top-level layout
+## 1) Top-Level Layout
 
 Authoritative layout:
 
-- root-level `*.md`: canonical system specifications
-- `docs/`: implementation sequencing and product-scope constraints
-- `crates/`: Rust implementation
+- root: entry documents and workspace manifests only
+- `docs/`: implementation sequencing, scope/status, runbooks, design notes, and spec folders
+- `docs/specs/active/`: canonical specs used by the current implementation cut
+- `docs/specs/deferred/`: long-horizon architecture specs retained as references
+- `crates/`: Rust implementation, tests, and migrations
 - `registry/`: bootstrap schema and capability artifacts
 - `reference/`: non-authoritative summaries and planning notes
 - `archive/`: legacy material only
 - `.codex/skills/`: local agent skills and guard scripts
 
-Anything outside this structure must be justified in PR description.
+Anything outside this structure must be justified in the PR description.
 
-## 2) Canonicality rules
+## 2) Canonicality Rules
 
-- Root-level specs are behavior source-of-truth unless explicitly marked otherwise.
-- `docs/IMPLEMENTATION_PLAN.md` is sequencing guidance, not a behavior override.
-- `reference/` and `archive/` must never be used to override canonical behavior.
-- New canonical behavior specs must be:
-  - created at repo root
-  - added to `index.md`
-  - referenced in `README.md` if they affect implementation flow
+- Current implementation authority starts with `docs/ARCHITECTURE_STATUS.md` and `docs/IMPLEMENTATION_PLAN.md`.
+- Active behavior specs live in `docs/specs/active/`.
+- Deferred specs live in `docs/specs/deferred/` and are not active acceptance gates.
+- `reference/` and `archive/` must never override active specs or status docs.
+- New implementation-driving specs must be:
+  - placed under `docs/specs/active/`,
+  - added to `docs/specs/README.md`,
+  - classified in `docs/ARCHITECTURE_STATUS.md`, and
+  - linked from `index.md` or `docs/DOCS_MAP.md` if they affect implementation flow.
 
-## 3) Placement rules
+## 3) Placement Rules
 
 ### 3.1 Root (`/`)
+
 Place only:
-- canonical specs
-- repo policy files (`README.md`, `AGENTS.md`)
-- workspace manifests (`Cargo.toml`, `Cargo.lock`)
+- `README.md`
+- `AGENTS.md`
+- `index.md`
+- workspace manifests and config files
 
 Do not place:
+- canonical specs
 - implementation sketches
 - migration notes
 - temporary analyses
 - generated files
 
 ### 3.2 `docs/`
-Place only:
+
+Place:
 - implementation plans
-- wedge/scope lock documents
-- process contracts (like this file)
-- navigation maps for specs/code traversal
+- architecture status and scope locks
+- wedge/runbook documents
+- process contracts
+- navigation maps
+- spec folders
 
-Do not place canonical behavior specs here.
+Do not place loose canonical specs directly under `docs/`; use `docs/specs/active/` or `docs/specs/deferred/`.
 
-### 3.3 `reference/`
-Place:
-- summaries
-- contract digests
-- implementation notes
+### 3.3 `docs/specs/active/`
 
-Each file should explicitly say it is non-authoritative.
+Place implementation-driving specs for the current operating cut.
 
-### 3.4 `archive/`
-Place only superseded material kept for history.
+### 3.4 `docs/specs/deferred/`
 
-### 3.5 `registry/`
-Place:
-- bootstrap schema payloads
-- bootstrap capability snapshot payloads
+Place broader or older architecture specs that remain useful references but should not drive current milestones.
 
-All files should map to canonical schema registry / capability snapshot contracts.
+### 3.5 `reference/`
 
-### 3.6 `crates/`
+Place summaries, contract digests, and implementation notes. Each file should explicitly say it is non-authoritative.
+
+### 3.6 `archive/`
+
+Place superseded material kept for history.
+
+### 3.7 `registry/`
+
+Place bootstrap schema payloads and bootstrap capability snapshot payloads.
+
+### 3.8 `crates/`
+
 Place only Rust code, tests, and migration assets required by code.
 
-## 4) Naming and consistency rules
+## 4) Naming and Consistency Rules
 
-- Use lowercase snake_case for canonical spec filenames.
-- Keep endpoint and contract naming aligned with current canonical forms:
-  - `control_plane_api_spec.md`
-  - approval routes keyed by `approval_id`
-  - pinned versions include:
-    - `active_state_version`
-    - `capability_snapshot_version`
-    - `audience_graph_version`
+- Use lowercase snake_case for spec filenames.
 - Avoid duplicate concept files under alternate names.
+- Keep endpoint and contract naming aligned with current canonical forms.
+- Do not move a spec between active/deferred without updating scope docs.
 
-## 5) Required checks before merging behavior changes
+## 5) Required Checks Before Merging Behavior Changes
 
 Run:
 
 ```bash
-./.codex/skills/adesh-spec-guard/scripts/check_spec_drift.sh
-cargo test --workspace
+./.codex/skills/adesh-spec-guard/scripts/check_spec_drift.sh .
+CARGO_TARGET_DIR=/tmp/adesh-cargo-target cargo test --workspace
 ```
 
 Required outcomes:
 
 - no stale filenames/endpoints/field names
-- no markdown wrapper artifacts in canonical docs
-- root-level docs remain indexed and resolvable
+- no markdown wrapper artifacts in docs
+- root markdown remains entry-only
+- `docs/specs/README.md` matches active/deferred placement
 - tests pass
 
-## 6) Commit hygiene
+## 6) Commit Hygiene
 
 - Keep docs/contract repairs separate from behavior changes when possible.
 - Keep generated artifacts out of Git.
 - Do not mix archive/reference churn into implementation commits unless required.
 - If a change touches behavior and specs, update specs first in the same PR or a preceding PR.
 
-## 7) Fast checklist
+## 7) Fast Checklist
 
 Before opening a PR:
 
-1. Canonical behavior in root specs is updated and indexed.
-2. New docs are in the correct folder.
-3. Guard script passes.
-4. Tests pass.
-5. No generated clutter is tracked.
+1. Active specs are in `docs/specs/active/` and indexed.
+2. Deferred specs are in `docs/specs/deferred/` and not described as current gates.
+3. Root markdown contains only entry documents.
+4. Guard script passes.
+5. Tests pass.
+6. No generated clutter is tracked.
 
-## 8) Traversal aids
+## 8) Traversal Aids
 
 Keep these navigation docs up to date when structure changes:
 
+- `index.md`
 - `docs/DOCS_MAP.md`
 - `docs/CODEBASE_MAP.md`
+- `docs/specs/README.md`
 - `crates/README.md`

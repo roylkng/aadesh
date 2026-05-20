@@ -6,14 +6,16 @@ use std::{
 };
 
 use adesh_contracts::{
-    PrepareTaskContextRequest, StoreWorkEpisodeRequest, WorkEpisodeDecision, WorkEpisodeTestResult,
-    WorkspaceDescriptor,
+    ConnectorEventRequest, PrepareTaskContextRequest, StoreWorkEpisodeRequest, WorkEpisodeDecision,
+    WorkEpisodeTestResult, WorkspaceDescriptor,
 };
 use adesh_core::{AppConfig, ports::storage::StorageProvider};
 use adesh_storage_sqlite::SqliteStorage;
 use anyhow::{Context, bail};
 
-use crate::{cognition, gemini_wrapper, qwen_wrapper};
+use crate::{
+    cognition, connector_adapter, gemini_wrapper, mcp_stdio, opencode_wrapper, qwen_wrapper,
+};
 
 pub async fn run_host_cli(config: AppConfig, args: &[String]) -> anyhow::Result<()> {
     let Some(command) = args.first().map(String::as_str) else {
@@ -25,11 +27,37 @@ pub async fn run_host_cli(config: AppConfig, args: &[String]) -> anyhow::Result<
     storage.migrate().await?;
 
     match command {
-        "gemini" => {
+        "gemini" | "gemini-cli" => {
             gemini_wrapper::run_gemini_host_cli(storage.as_ref(), &args[1..], Some(&cwd)).await?;
         }
-        "qwen" => {
+        "opencode" | "opencode-cli" => {
+            opencode_wrapper::run_opencode_host_cli(storage.as_ref(), &args[1..], Some(&cwd))
+                .await?;
+        }
+        "qwen" | "qwen-cli" | "qwen-code" => {
             qwen_wrapper::run_qwen_host_cli(storage.as_ref(), &args[1..], Some(&cwd)).await?;
+        }
+        "mcp-stdio" => {
+            if args.len() != 1 {
+                bail!("usage: adesh-daemon host mcp-stdio");
+            }
+            mcp_stdio::run_mcp_stdio(storage.as_ref(), Some(&cwd)).await?;
+        }
+        "connector" => {
+            let json = parse_json_arg(
+                &args[1..],
+                "usage: adesh-daemon host connector --json '<connector_event_payload>'",
+            )?;
+            let request: ConnectorEventRequest =
+                serde_json::from_str(json).context("invalid connector event payload")?;
+            let response = connector_adapter::handle_connector_event(storage.as_ref(), request)
+                .await
+                .context("connector adapter failed")?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&response)
+                    .context("failed to serialize connector response")?
+            );
         }
         "prepare" => {
             let request = build_prepare_request(&args[1..], Some(&cwd))?;
@@ -57,6 +85,13 @@ pub async fn run_host_cli(config: AppConfig, args: &[String]) -> anyhow::Result<
     }
 
     Ok(())
+}
+
+fn parse_json_arg<'a>(args: &'a [String], usage: &str) -> anyhow::Result<&'a str> {
+    if args.len() != 2 || args[0] != "--json" {
+        bail!("{usage}");
+    }
+    Ok(args[1].as_str())
 }
 
 pub fn build_prepare_request(

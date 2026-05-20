@@ -321,3 +321,136 @@ cargo run -p adesh-daemon -- host qwen run \
   --task-hint qwen-wrapper \
   -- --model qwen3-coder-plus
 ```
+
+Qwen Code alias (same wrapper behavior):
+
+```bash
+cargo run -p adesh-daemon -- host qwen-code run \
+  --task "Use Qwen Code CLI to review the wrapper component for Aadesh itself." \
+  --file crates/adesh-daemon/src/host_cli.rs \
+  --task-hint qwen-wrapper \
+  -- --model qwen3-coder-plus
+```
+
+If the Qwen binary is not on `PATH`, set `ADESH_QWEN_BIN` to the executable path before running the wrapper.
+
+OpenCode reference integration on top of the same host wrapper:
+
+```bash
+cargo run -p adesh-daemon -- host opencode run \
+  --task "Use OpenCode CLI to build the wrapper component for Aadesh itself." \
+  --file crates/adesh-daemon/src/host_cli.rs \
+  --task-hint opencode-wrapper \
+  -- --model opencode-large
+```
+
+If the OpenCode binary is not on `PATH`, set `ADESH_OPENCODE_BIN` to the executable path before running the wrapper.
+
+Minimal MCP bridge on top of the same cognition core:
+
+```bash
+cargo run -p adesh-daemon -- host mcp-stdio
+```
+
+The active MCP bridge profile exposes only:
+- `adesh.prepare_task_context`
+- `adesh.store_work_episode`
+- `adesh.recall_relevant_memory`
+- `adesh.connector_event`
+
+Smoke test the MCP bridge:
+
+```bash
+./scripts/mcp_cognition_smoke.sh
+```
+
+Generic connector event adapter (host-agnostic):
+
+```bash
+cargo run -p adesh-daemon -- host connector --json '{...}'
+```
+
+Event mapping:
+- `task_start` => `prepare_task_context`
+- `task_checkpoint` => `store_work_episode`
+- `task_end` => `store_work_episode`
+
+These are connector abstraction events, not claimed native lifecycle callbacks of any specific host.
+
+Optional connector trace fields may be provided for future supervisory analysis:
+`host_agent_id`, `host_agent_kind`, `host_model`, `context_id`,
+`selected_next_direction`, `outcome`, `correction_summary`.
+
+Connector smoke:
+
+```bash
+./scripts/connector_event_smoke.sh
+```
+
+Background coding-session watcher (auto-store episodes):
+
+```bash
+./scripts/session_learning_ctl.sh start \
+  --task "Track my active Aadesh coding session and capture useful continuity memory." \
+  --task-hint session-watcher
+```
+
+Check watcher status or stop it:
+
+```bash
+./scripts/session_learning_ctl.sh status --task-hint session-watcher
+./scripts/session_learning_ctl.sh stop --task-hint session-watcher
+```
+
+Inspect latest watcher-captured episodes:
+
+```bash
+./scripts/session_learning_recent.sh --db-path /path/to/adesh.db --limit 10 --task-hint session-watcher
+```
+
+Capture richer post-task memory with low host friction:
+
+```bash
+./scripts/session_learning_capture.sh \
+  --task "Harden retry path for upload worker" \
+  --summary "Kept dedupe in service boundary; timeout benchmark still pending." \
+  --task-hint retry-hardening \
+  --decision "Keep duplicate protection in UploadService::Avoid transport-layer coupling" \
+  --unresolved "Run timeout benchmark under packet loss" \
+  --risk "Without timeout benchmark, reliability claims remain weak" \
+  --test "pass::retry_backoff_unit::Backoff envelope remains within policy bounds"
+```
+
+Run local wedge evaluation harness:
+
+```bash
+./scripts/cognitive_eval_harness.sh
+```
+
+The harness outputs `/tmp/adesh-eval-<timestamp>/report.json` and checks:
+- mean score improvement
+- decision and open-loop recall improvement
+- next-direction acceptance
+- false-memory rate
+
+Multi-repo Codex-extension usage (shared Aadesh DB, per-repo sessions):
+
+```bash
+export ADESH_DAEMON_ROOT="/home/rajan/Desktop/work/aadesh"
+export ADESH_DATABASE_URL="sqlite:///home/rajan/.aadesh/cognition.db?mode=rwc"
+
+"$ADESH_DAEMON_ROOT/scripts/session_learning_prepare.sh" \
+  --task "What should I focus on next for this task?" \
+  --task-hint codex-main \
+  --auto-files
+
+"$ADESH_DAEMON_ROOT/scripts/session_learning_ctl.sh" start \
+  --task "Track this Codex coding session and capture continuity memory." \
+  --task-hint codex-main
+
+"$ADESH_DAEMON_ROOT/scripts/session_learning_capture.sh" \
+  --task "Task I just finished" \
+  --summary "What changed and why" \
+  --task-hint codex-main \
+  --decision "Key decision::Rationale"
+```
